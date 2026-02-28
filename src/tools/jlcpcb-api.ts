@@ -12,8 +12,8 @@ export function registerJLCPCBApiTools(server: McpServer, callKicadScript: Funct
     "download_jlcpcb_database",
     `Download the complete JLCPCB parts catalog to local database.
 
-This is a one-time setup that downloads ~100k+ parts from JLCPCB API.
-Requires JLCPCB_API_KEY and JLCPCB_API_SECRET environment variables.
+This is a one-time setup that downloads ~2.5M+ parts from JLCSearch API.
+No API credentials required - uses public JLCSearch API.
 
 The download takes 5-10 minutes and creates a local SQLite database
 for fast offline searching.`,

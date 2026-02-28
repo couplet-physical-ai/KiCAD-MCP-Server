@@ -230,7 +230,7 @@ The server provides 64 tools organized into functional categories. With the new 
 
 ### JLCPCB Integration (5 tools)
 - `download_jlcpcb_database` - Download complete JLCPCB parts catalog (one-time setup)
-- `search_jlcpcb_parts` - Search 100k+ parts with parametric filters
+- `search_jlcpcb_parts` - Search 2.5M+ parts with parametric filters
 - `get_jlcpcb_part` - Get detailed part info with pricing and footprints
 - `get_jlcpcb_database_stats` - View database statistics and coverage
 - `suggest_jlcpcb_alternatives` - Find cheaper or more available alternatives
@@ -372,19 +372,31 @@ See [Windows Installation Guide](docs/WINDOWS_SETUP.md) for detailed instruction
 
 ### macOS
 
+**Important:** On macOS, use KiCAD's bundled Python to ensure proper access to pcbnew module.
+
 ```bash
 # Install KiCAD 9.0 from kicad.org/download/macos
 
 # Install Node.js
 brew install node@20
 
-# Clone and build
+# Clone repository
 git clone https://github.com/mixelpixx/KiCAD-MCP-Server.git
 cd KiCAD-MCP-Server
+
+# Create virtual environment using KiCAD's bundled Python
+/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 -m venv venv --system-site-packages
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Install dependencies
 npm install
-pip3 install -r requirements.txt
+pip install -r requirements.txt
 npm run build
 ```
+
+**Note:** The `--system-site-packages` flag is required to access KiCAD's pcbnew module from the virtual environment.
 
 ## Configuration
 
@@ -479,7 +491,7 @@ To download the database:
 Ask Claude: "Download the JLCPCB parts database"
 ```
 
-This creates a local SQLite database at `data/jlcpcb_parts.db` (~1-2 GB for full catalog).
+This creates a local SQLite database at `data/jlcpcb_parts.db` (3-5 GB for full 2.5M+ part catalog).
 
 **Mode 2: Local Symbol Libraries (No Setup Required)**
 
@@ -758,7 +770,7 @@ npm run format
 - UI auto-launch
 - Full MCP protocol compliance
 - JLCPCB parts integration (local libraries + JLCSearch API)
-- Cost optimization and component selection with 100k+ parts catalog
+- Cost optimization and component selection with 2.5M+ parts catalog
 
 **Under Active Development (IPC Backend):**
 - Real-time UI synchronization via KiCAD 9.0 IPC API

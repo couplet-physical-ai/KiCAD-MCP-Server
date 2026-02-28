@@ -45,7 +45,7 @@ Downloaded 200 parts...
 Downloaded 2,500,000 parts...
 
 Total parts: 2,500,000+
-Database size: ~1-2 GB
+Database size: 3-5 GB (full catalog)
 ```
 
 ### Usage Examples
