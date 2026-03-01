@@ -71,6 +71,103 @@ class RoutingCommands:
                 "errorDetails": str(e),
             }
 
+    def route_pad_to_pad(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Route a trace directly from one component pad to another.
+
+        Looks up pad positions automatically, then creates a trace.
+        Convenience wrapper around route_trace that eliminates the need
+        for separate get_pad_position calls.
+        """
+        try:
+            if not self.board:
+                return {
+                    "success": False,
+                    "message": "No board is loaded",
+                    "errorDetails": "Load or create a board first",
+                }
+
+            from_ref = params.get("fromRef")
+            from_pad = str(params.get("fromPad", ""))
+            to_ref = params.get("toRef")
+            to_pad = str(params.get("toPad", ""))
+            layer = params.get("layer", "F.Cu")
+            width = params.get("width")
+            net = params.get("net")  # optional override
+
+            if not from_ref or not from_pad or not to_ref or not to_pad:
+                return {
+                    "success": False,
+                    "message": "Missing parameters",
+                    "errorDetails": "fromRef, fromPad, toRef, toPad are all required",
+                }
+
+            scale = 1000000  # nm to mm
+
+            # Find pads
+            footprints = {fp.GetReference(): fp for fp in self.board.GetFootprints()}
+
+            for ref in [from_ref, to_ref]:
+                if ref not in footprints:
+                    return {
+                        "success": False,
+                        "message": f"Component not found: {ref}",
+                        "errorDetails": f"'{ref}' does not exist on the board",
+                    }
+
+            def find_pad(ref: str, pad_num: str):
+                fp = footprints[ref]
+                for pad in fp.Pads():
+                    if pad.GetNumber() == pad_num:
+                        return pad
+                return None
+
+            start_pad = find_pad(from_ref, from_pad)
+            end_pad = find_pad(to_ref, to_pad)
+
+            if not start_pad:
+                return {
+                    "success": False,
+                    "message": f"Pad not found: {from_ref} pad {from_pad}",
+                    "errorDetails": f"Check pad number for {from_ref}",
+                }
+            if not end_pad:
+                return {
+                    "success": False,
+                    "message": f"Pad not found: {to_ref} pad {to_pad}",
+                    "errorDetails": f"Check pad number for {to_ref}",
+                }
+
+            start_pos = start_pad.GetPosition()
+            end_pos = end_pad.GetPosition()
+
+            # Use net from start pad if not overridden
+            if not net:
+                net = start_pad.GetNetname() or end_pad.GetNetname() or ""
+
+            # Delegate to route_trace
+            result = self.route_trace({
+                "start": {"x": start_pos.x / scale, "y": start_pos.y / scale, "unit": "mm"},
+                "end":   {"x": end_pos.x / scale,   "y": end_pos.y / scale,   "unit": "mm"},
+                "layer": layer,
+                "width": width,
+                "net": net,
+            })
+
+            if result.get("success"):
+                result["message"] = f"Routed {from_ref}.{from_pad} → {to_ref}.{to_pad} (net: {net or 'none'})"
+                result["fromPad"] = {"ref": from_ref, "pad": from_pad, "x": start_pos.x / scale, "y": start_pos.y / scale}
+                result["toPad"]   = {"ref": to_ref,   "pad": to_pad,   "x": end_pos.x / scale,   "y": end_pos.y / scale}
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error in route_pad_to_pad: {str(e)}")
+            return {
+                "success": False,
+                "message": "Failed to route pad to pad",
+                "errorDetails": str(e),
+            }
+
     def route_trace(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Route a trace between two points or pads"""
         try:

@@ -322,6 +322,27 @@ export function registerRoutingTools(
     },
   );
 
+  // Route pad to pad tool
+  server.tool(
+    "route_pad_to_pad",
+    "Route a trace directly from one component pad to another without needing separate get_pad_position calls. Automatically looks up pad coordinates and uses the pad's net. Saves token usage compared to the 3-step get_pad_position + get_pad_position + route_trace sequence.",
+    {
+      fromRef: z.string().describe("Reference of the source component (e.g. 'U2')"),
+      fromPad: z.union([z.string(), z.number()]).describe("Pad number on the source component (e.g. '6' or 6)"),
+      toRef: z.string().describe("Reference of the target component (e.g. 'U1')"),
+      toPad: z.union([z.string(), z.number()]).describe("Pad number on the target component (e.g. '15' or 15)"),
+      layer: z.string().optional().describe("PCB layer (default: F.Cu)"),
+      width: z.number().optional().describe("Trace width in mm (default: board default)"),
+      net: z.string().optional().describe("Net name override (default: auto-detected from pad)"),
+    },
+    async (args: any) => {
+      const result = await callKicadScript("route_pad_to_pad", args);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    },
+  );
+
   // Copy routing pattern tool
   server.tool(
     "copy_routing_pattern",

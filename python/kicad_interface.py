@@ -308,6 +308,7 @@ class KiCADInterface:
             "add_text": self.board_commands.add_text,
             "add_board_text": self.board_commands.add_text,  # Alias for TypeScript tool
             # Component commands
+            "route_pad_to_pad": self.routing_commands.route_pad_to_pad,
             "place_component": self._handle_place_component,
             "move_component": self.component_commands.move_component,
             "rotate_component": self.component_commands.rotate_component,
