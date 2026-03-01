@@ -321,4 +321,39 @@ export function registerRoutingTools(
       };
     },
   );
+
+  // Copy routing pattern tool
+  server.tool(
+    "copy_routing_pattern",
+    "Copy routing pattern (traces and vias) from a group of source components to a matching group of target components. The offset is calculated automatically from the position difference between the first source and first target component. Useful for replicating routing between identical circuit blocks.",
+    {
+      sourceRefs: z
+        .array(z.string())
+        .describe("References of the source components (e.g. ['U1', 'R1', 'C1'])"),
+      targetRefs: z
+        .array(z.string())
+        .describe(
+          "References of the target components in same order as sourceRefs (e.g. ['U2', 'R2', 'C2'])",
+        ),
+      includeVias: z
+        .boolean()
+        .optional()
+        .describe("Also copy vias (default: true)"),
+      traceWidth: z
+        .number()
+        .optional()
+        .describe("Override trace width in mm (default: keep original width)"),
+    },
+    async (args: any) => {
+      const result = await callKicadScript("copy_routing_pattern", args);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    },
+  );
 }

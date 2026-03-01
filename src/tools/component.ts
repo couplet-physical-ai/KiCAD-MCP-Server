@@ -57,6 +57,10 @@ export function registerComponentTools(
         .string()
         .optional()
         .describe("Optional layer (e.g., 'F.Cu', 'B.SilkS')"),
+      boardPath: z
+        .string()
+        .optional()
+        .describe("Path to the .kicad_pcb file – required when using project-local footprint libraries"),
     },
     async ({
       componentId,
@@ -66,6 +70,7 @@ export function registerComponentTools(
       footprint,
       rotation,
       layer,
+      boardPath,
     }) => {
       logger.debug(
         `Placing component: ${componentId} at ${position.x},${position.y} ${position.unit}`,
@@ -78,6 +83,7 @@ export function registerComponentTools(
         footprint,
         rotation,
         layer,
+        boardPath,
       });
 
       return {

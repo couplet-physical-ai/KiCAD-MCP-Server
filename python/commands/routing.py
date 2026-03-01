@@ -729,28 +729,71 @@ class RoutingCommands:
 
             # Collect all nets connected to source components
             source_nets = set()
+            source_pad_positions = []  # (x, y) in nm for geometric fallback
             for ref in source_refs:
                 fp = footprints[ref]
                 for pad in fp.Pads():
                     net_name = pad.GetNetname()
                     if net_name and net_name != "":
                         source_nets.add(net_name)
+                    pos = pad.GetPosition()
+                    source_pad_positions.append((pos.x, pos.y))
 
-            # Collect traces and vias connected to source nets
+            # Build bounding box around source pads (with 5mm tolerance in nm)
+            TOLERANCE_NM = int(5 * scale)
+            if source_pad_positions:
+                xs = [p[0] for p in source_pad_positions]
+                ys = [p[1] for p in source_pad_positions]
+                bbox_x1 = min(xs) - TOLERANCE_NM
+                bbox_x2 = max(xs) + TOLERANCE_NM
+                bbox_y1 = min(ys) - TOLERANCE_NM
+                bbox_y2 = max(ys) + TOLERANCE_NM
+            else:
+                # Fall back to component position ± 25mm
+                sp = source_fp.GetPosition()
+                bbox_x1 = sp.x - int(25 * scale)
+                bbox_x2 = sp.x + int(25 * scale)
+                bbox_y1 = sp.y - int(25 * scale)
+                bbox_y2 = sp.y + int(25 * scale)
+
+            def point_in_bbox(px: int, py: int) -> bool:
+                return bbox_x1 <= px <= bbox_x2 and bbox_y1 <= py <= bbox_y2
+
+            # Collect traces: by net name (if available) OR by geometric proximity
+            use_net_filter = len(source_nets) > 0
             traces_to_copy = []
             vias_to_copy = []
 
             for track in list(self.board.Tracks()):
-                if track.GetNetname() not in source_nets:
-                    continue
-
                 is_via = track.Type() == pcbnew.PCB_VIA_T
+
+                if use_net_filter:
+                    # Primary: net-based filter
+                    if track.GetNetname() not in source_nets:
+                        continue
+                else:
+                    # Fallback: geometric filter – trace start OR end inside source bbox
+                    if is_via:
+                        pos = track.GetPosition()
+                        if not point_in_bbox(pos.x, pos.y):
+                            continue
+                    else:
+                        s = track.GetStart()
+                        e = track.GetEnd()
+                        if not (point_in_bbox(s.x, s.y) or point_in_bbox(e.x, e.y)):
+                            continue
 
                 if is_via:
                     if include_vias:
                         vias_to_copy.append(track)
                 else:
                     traces_to_copy.append(track)
+
+            filter_method = "net-based" if use_net_filter else "geometric (pads have no nets)"
+            logger.info(
+                f"copy_routing_pattern: {len(traces_to_copy)} traces, "
+                f"{len(vias_to_copy)} vias selected via {filter_method}"
+            )
 
             # Create new traces with offset
             created_traces = 0
@@ -796,6 +839,7 @@ class RoutingCommands:
             result = {
                 "success": True,
                 "message": f"Copied routing pattern: {created_traces} traces, {created_vias} vias",
+                "filterMethod": filter_method,
                 "offset": {"x": offset_x / scale, "y": offset_y / scale, "unit": "mm"},
                 "createdTraces": created_traces,
                 "createdVias": created_vias,
