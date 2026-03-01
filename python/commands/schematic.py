@@ -28,6 +28,21 @@ class SchematicManager:
             if os.path.exists(template_path):
                 # Copy template to target location
                 shutil.copy(template_path, output_path)
+
+                # Regenerate UUID to ensure uniqueness for each created schematic
+                import re
+                with open(output_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                new_uuid = str(uuid.uuid4())
+                content = re.sub(
+                    r'\(uuid [0-9a-fA-F-]+\)',
+                    f'(uuid {new_uuid})',
+                    content,
+                    count=1  # Only replace first (schematic) UUID
+                )
+                with open(output_path, 'w', encoding='utf-8', newline='\n') as f:
+                    f.write(content)
+
                 logger.info(f"Created schematic from template: {output_path}")
             else:
                 # Fallback: create minimal schematic

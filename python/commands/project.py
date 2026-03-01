@@ -75,16 +75,21 @@ class ProjectCommands:
                 # Copy template schematic
                 shutil.copy(template_sch_path, schematic_path)
 
-                # Replace placeholder UUID with a real one
+                # Regenerate UUID to ensure uniqueness for each created project
+                import re
                 import uuid as uuid_module
 
                 with open(schematic_path, "r", encoding="utf-8") as f:
-                    sch_content = f.read()
-                sch_content = sch_content.replace(
-                    "00000000-0000-0000-0000-000000000000", str(uuid_module.uuid4())
+                    content = f.read()
+                new_uuid = str(uuid_module.uuid4())
+                content = re.sub(
+                    r"\(uuid [0-9a-fA-F-]+\)",
+                    f"(uuid {new_uuid})",
+                    content,
+                    count=1,  # Only replace first (schematic) UUID
                 )
-                with open(schematic_path, "w", encoding="utf-8") as f:
-                    f.write(sch_content)
+                with open(schematic_path, "w", encoding="utf-8", newline="\n") as f:
+                    f.write(content)
 
                 logger.info(f"Created schematic from template: {schematic_path}")
             else:
@@ -94,15 +99,16 @@ class ProjectCommands:
                 )
                 import uuid as uuid_module
 
-                with open(schematic_path, "w") as f:
+                schematic_uuid = str(uuid_module.uuid4())
+                with open(schematic_path, "w", encoding="utf-8", newline="\n") as f:
                     f.write(
-                        f'(kicad_sch (version 20250114) (generator "KiCAD-MCP-Server")\n\n'
+                        '(kicad_sch (version 20250114) (generator "KiCAD-MCP-Server")\n\n'
                     )
-                    f.write(f"  (uuid {str(uuid_module.uuid4())})\n\n")
-                    f.write(f'  (paper "A4")\n\n')
-                    f.write(f"  (lib_symbols\n  )\n\n")
-                    f.write(f'  (sheet_instances\n    (path "/" (page "1"))\n  )\n')
-                    f.write(f")\n")
+                    f.write(f"  (uuid {schematic_uuid})\n\n")
+                    f.write('  (paper "A4")\n\n')
+                    f.write("  (lib_symbols\n  )\n\n")
+                    f.write('  (sheet_instances\n    (path "/" (page "1"))\n  )\n')
+                    f.write(")\n")
 
             # Create project file with schematic reference
             with open(project_path, "w") as f:
