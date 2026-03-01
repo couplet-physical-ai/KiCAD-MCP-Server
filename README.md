@@ -17,8 +17,14 @@ The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standa
 - Real-time KiCAD UI integration via IPC API (experimental)
 - Comprehensive error handling and logging
 
-## Try out Arduino MCP - now you can get Claude to help in thhe IDE, real time:
+
+
+## Try out Arduino MCP - now you can get Claude to help in the IDE, real time!:
 https://github.com/mixelpixx/arduino-ide
+
+
+
+
 
 ## What's New in v2.1.0
 
@@ -834,6 +840,7 @@ If you use this project in your research or publication, please cite:
   version = {2.1.0-alpha}
 }
 ```
+
 
 
 
