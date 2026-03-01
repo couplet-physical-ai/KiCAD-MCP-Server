@@ -71,6 +71,103 @@ class RoutingCommands:
                 "errorDetails": str(e),
             }
 
+    def route_pad_to_pad(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Route a trace directly from one component pad to another.
+
+        Looks up pad positions automatically, then creates a trace.
+        Convenience wrapper around route_trace that eliminates the need
+        for separate get_pad_position calls.
+        """
+        try:
+            if not self.board:
+                return {
+                    "success": False,
+                    "message": "No board is loaded",
+                    "errorDetails": "Load or create a board first",
+                }
+
+            from_ref = params.get("fromRef")
+            from_pad = str(params.get("fromPad", ""))
+            to_ref = params.get("toRef")
+            to_pad = str(params.get("toPad", ""))
+            layer = params.get("layer", "F.Cu")
+            width = params.get("width")
+            net = params.get("net")  # optional override
+
+            if not from_ref or not from_pad or not to_ref or not to_pad:
+                return {
+                    "success": False,
+                    "message": "Missing parameters",
+                    "errorDetails": "fromRef, fromPad, toRef, toPad are all required",
+                }
+
+            scale = 1000000  # nm to mm
+
+            # Find pads
+            footprints = {fp.GetReference(): fp for fp in self.board.GetFootprints()}
+
+            for ref in [from_ref, to_ref]:
+                if ref not in footprints:
+                    return {
+                        "success": False,
+                        "message": f"Component not found: {ref}",
+                        "errorDetails": f"'{ref}' does not exist on the board",
+                    }
+
+            def find_pad(ref: str, pad_num: str):
+                fp = footprints[ref]
+                for pad in fp.Pads():
+                    if pad.GetNumber() == pad_num:
+                        return pad
+                return None
+
+            start_pad = find_pad(from_ref, from_pad)
+            end_pad = find_pad(to_ref, to_pad)
+
+            if not start_pad:
+                return {
+                    "success": False,
+                    "message": f"Pad not found: {from_ref} pad {from_pad}",
+                    "errorDetails": f"Check pad number for {from_ref}",
+                }
+            if not end_pad:
+                return {
+                    "success": False,
+                    "message": f"Pad not found: {to_ref} pad {to_pad}",
+                    "errorDetails": f"Check pad number for {to_ref}",
+                }
+
+            start_pos = start_pad.GetPosition()
+            end_pos = end_pad.GetPosition()
+
+            # Use net from start pad if not overridden
+            if not net:
+                net = start_pad.GetNetname() or end_pad.GetNetname() or ""
+
+            # Delegate to route_trace
+            result = self.route_trace({
+                "start": {"x": start_pos.x / scale, "y": start_pos.y / scale, "unit": "mm"},
+                "end":   {"x": end_pos.x / scale,   "y": end_pos.y / scale,   "unit": "mm"},
+                "layer": layer,
+                "width": width,
+                "net": net,
+            })
+
+            if result.get("success"):
+                result["message"] = f"Routed {from_ref}.{from_pad} → {to_ref}.{to_pad} (net: {net or 'none'})"
+                result["fromPad"] = {"ref": from_ref, "pad": from_pad, "x": start_pos.x / scale, "y": start_pos.y / scale}
+                result["toPad"]   = {"ref": to_ref,   "pad": to_pad,   "x": end_pos.x / scale,   "y": end_pos.y / scale}
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error in route_pad_to_pad: {str(e)}")
+            return {
+                "success": False,
+                "message": "Failed to route pad to pad",
+                "errorDetails": str(e),
+            }
+
     def route_trace(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Route a trace between two points or pads"""
         try:
@@ -729,28 +826,71 @@ class RoutingCommands:
 
             # Collect all nets connected to source components
             source_nets = set()
+            source_pad_positions = []  # (x, y) in nm for geometric fallback
             for ref in source_refs:
                 fp = footprints[ref]
                 for pad in fp.Pads():
                     net_name = pad.GetNetname()
                     if net_name and net_name != "":
                         source_nets.add(net_name)
+                    pos = pad.GetPosition()
+                    source_pad_positions.append((pos.x, pos.y))
 
-            # Collect traces and vias connected to source nets
+            # Build bounding box around source pads (with 5mm tolerance in nm)
+            TOLERANCE_NM = int(5 * scale)
+            if source_pad_positions:
+                xs = [p[0] for p in source_pad_positions]
+                ys = [p[1] for p in source_pad_positions]
+                bbox_x1 = min(xs) - TOLERANCE_NM
+                bbox_x2 = max(xs) + TOLERANCE_NM
+                bbox_y1 = min(ys) - TOLERANCE_NM
+                bbox_y2 = max(ys) + TOLERANCE_NM
+            else:
+                # Fall back to component position ± 25mm
+                sp = source_fp.GetPosition()
+                bbox_x1 = sp.x - int(25 * scale)
+                bbox_x2 = sp.x + int(25 * scale)
+                bbox_y1 = sp.y - int(25 * scale)
+                bbox_y2 = sp.y + int(25 * scale)
+
+            def point_in_bbox(px: int, py: int) -> bool:
+                return bbox_x1 <= px <= bbox_x2 and bbox_y1 <= py <= bbox_y2
+
+            # Collect traces: by net name (if available) OR by geometric proximity
+            use_net_filter = len(source_nets) > 0
             traces_to_copy = []
             vias_to_copy = []
 
             for track in list(self.board.Tracks()):
-                if track.GetNetname() not in source_nets:
-                    continue
-
                 is_via = track.Type() == pcbnew.PCB_VIA_T
+
+                if use_net_filter:
+                    # Primary: net-based filter
+                    if track.GetNetname() not in source_nets:
+                        continue
+                else:
+                    # Fallback: geometric filter – trace start OR end inside source bbox
+                    if is_via:
+                        pos = track.GetPosition()
+                        if not point_in_bbox(pos.x, pos.y):
+                            continue
+                    else:
+                        s = track.GetStart()
+                        e = track.GetEnd()
+                        if not (point_in_bbox(s.x, s.y) or point_in_bbox(e.x, e.y)):
+                            continue
 
                 if is_via:
                     if include_vias:
                         vias_to_copy.append(track)
                 else:
                     traces_to_copy.append(track)
+
+            filter_method = "net-based" if use_net_filter else "geometric (pads have no nets)"
+            logger.info(
+                f"copy_routing_pattern: {len(traces_to_copy)} traces, "
+                f"{len(vias_to_copy)} vias selected via {filter_method}"
+            )
 
             # Create new traces with offset
             created_traces = 0
@@ -796,6 +936,7 @@ class RoutingCommands:
             result = {
                 "success": True,
                 "message": f"Copied routing pattern: {created_traces} traces, {created_vias} vias",
+                "filterMethod": filter_method,
                 "offset": {"x": offset_x / scale, "y": offset_y / scale, "unit": "mm"},
                 "createdTraces": created_traces,
                 "createdVias": created_vias,

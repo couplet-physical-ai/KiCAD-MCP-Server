@@ -273,6 +273,7 @@ class KiCADInterface:
         self.design_rule_commands = DesignRuleCommands(self.board)
         self.export_commands = ExportCommands(self.board)
         self.library_commands = LibraryCommands(self.footprint_library)
+        self._current_project_path: Optional[Path] = None  # set when boardPath is known
 
         # Initialize symbol library manager (for searching local KiCad symbol libraries)
         self.symbol_library_commands = SymbolLibraryCommands()
@@ -307,7 +308,8 @@ class KiCADInterface:
             "add_text": self.board_commands.add_text,
             "add_board_text": self.board_commands.add_text,  # Alias for TypeScript tool
             # Component commands
-            "place_component": self.component_commands.place_component,
+            "route_pad_to_pad": self.routing_commands.route_pad_to_pad,
+            "place_component": self._handle_place_component,
             "move_component": self.component_commands.move_component,
             "rotate_component": self.component_commands.rotate_component,
             "delete_component": self.component_commands.delete_component,
@@ -579,6 +581,21 @@ class KiCADInterface:
             logger.error(f"Error loading schematic: {str(e)}")
             return {"success": False, "message": str(e)}
 
+    def _handle_place_component(self, params):
+        """Place a component on the PCB, with project-local fp-lib-table support."""
+        from pathlib import Path
+
+        board_path = params.get("boardPath")
+        if board_path:
+            project_path = Path(board_path).parent
+            if project_path != getattr(self, "_current_project_path", None):
+                self._current_project_path = project_path
+                local_lib = FootprintLibraryManager(project_path=project_path)
+                self.component_commands = ComponentCommands(self.board, local_lib)
+                logger.info(f"Reloaded FootprintLibraryManager with project_path={project_path}")
+
+        return self.component_commands.place_component(params)
+
     def _handle_add_schematic_component(self, params):
         """Add a component to a schematic using text-based injection (no sexpdata)"""
         logger.info("Adding component to schematic")
@@ -602,9 +619,13 @@ class KiCADInterface:
             x = component.get("x", 0)
             y = component.get("y", 0)
 
-            loader = DynamicSymbolLoader()
+            # Derive project path from schematic path for project-local library resolution
+            schematic_file = Path(schematic_path)
+            derived_project_path = schematic_file.parent
+
+            loader = DynamicSymbolLoader(project_path=derived_project_path)
             loader.add_component(
-                Path(schematic_path),
+                schematic_file,
                 library,
                 comp_type,
                 reference=reference,
@@ -612,6 +633,7 @@ class KiCADInterface:
                 footprint=footprint,
                 x=x,
                 y=y,
+                project_path=derived_project_path,
             )
 
             return {

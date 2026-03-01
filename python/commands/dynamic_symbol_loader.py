@@ -29,8 +29,9 @@ class DynamicSymbolLoader:
     - Parent symbols must appear BEFORE child symbols that use (extends ...)
     """
 
-    def __init__(self):
+    def __init__(self, project_path: Optional[Path] = None):
         self.symbol_cache = {}  # Cache: "lib:symbol" -> raw text block
+        self.project_path = project_path  # Project directory for project-specific libraries
 
     def find_kicad_symbol_libraries(self) -> List[Path]:
         """Find all KiCad symbol library directories"""
@@ -50,13 +51,73 @@ class DynamicSymbolLoader:
         return [p for p in possible_paths if p.exists() and p.is_dir()]
 
     def find_library_file(self, library_name: str) -> Optional[Path]:
-        """Find the .kicad_sym file for a given library name"""
+        """Find the .kicad_sym file for a given library name.
+
+        Search order:
+        1. Project-specific sym-lib-table (if project_path is set)
+        2. Global KiCad symbol library directories
+        """
+        # 1. Check project-specific sym-lib-table
+        if self.project_path:
+            project_table = Path(self.project_path) / "sym-lib-table"
+            if project_table.exists():
+                resolved = self._resolve_library_from_table(project_table, library_name)
+                if resolved:
+                    logger.info(f"Found '{library_name}' in project sym-lib-table: {resolved}")
+                    return resolved
+
+        # 2. Fall back to global KiCad symbol directories
         for lib_dir in self.find_kicad_symbol_libraries():
             lib_file = lib_dir / f"{library_name}.kicad_sym"
             if lib_file.exists():
                 return lib_file
+
         logger.warning(f"Library file not found: {library_name}.kicad_sym")
         return None
+
+    def _resolve_library_from_table(self, table_path: Path, library_name: str) -> Optional[Path]:
+        """Parse a sym-lib-table file and return the resolved path for the given library nickname."""
+        try:
+            with open(table_path, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            lib_pattern = r'\(lib\s+\(name\s+"?([^"\)\s]+)"?\)\s*\(type\s+[^)]+\)\s*\(uri\s+"?([^"\)\s]+)"?'
+            for match in re.finditer(lib_pattern, content, re.IGNORECASE):
+                nickname = match.group(1)
+                if nickname != library_name:
+                    continue
+                uri = match.group(2)
+                resolved = self._resolve_sym_uri(uri)
+                if resolved and Path(resolved).exists():
+                    return Path(resolved)
+        except Exception as e:
+            logger.warning(f"Could not parse sym-lib-table {table_path}: {e}")
+        return None
+
+    def _resolve_sym_uri(self, uri: str) -> Optional[str]:
+        """Resolve environment variables in a sym-lib-table URI."""
+        env_map = {
+            "KICAD9_SYMBOL_DIR": [
+                "C:/Program Files/KiCad/9.0/share/kicad/symbols",
+                "/usr/share/kicad/symbols",
+                "/Applications/KiCad/KiCad.app/Contents/SharedSupport/symbols",
+            ],
+            "KICAD8_SYMBOL_DIR": [
+                "C:/Program Files/KiCad/8.0/share/kicad/symbols",
+            ],
+            "KIPRJMOD": [str(self.project_path)] if self.project_path else [],
+        }
+        result = uri
+        for var, candidates in env_map.items():
+            if f"${{{var}}}" in result:
+                for candidate in candidates:
+                    candidate_path = result.replace(f"${{{var}}}", candidate)
+                    if Path(candidate_path).exists():
+                        return candidate_path
+                # Fallback: try OS env
+                if var in os.environ:
+                    return result.replace(f"${{{var}}}", os.environ[var])
+        return result
 
     def _extract_symbol_block(self, text: str, symbol_name: str) -> Optional[str]:
         """
@@ -345,11 +406,18 @@ class DynamicSymbolLoader:
         footprint: str = "",
         x: float = 0,
         y: float = 0,
+        project_path: Optional[Path] = None,
     ) -> bool:
         """
         High-level: ensure symbol definition exists in schematic, then add an instance.
         This is the main entry point for adding components.
+
+        Args:
+            project_path: Optional project directory. When set, project-specific
+                          sym-lib-table is also searched for the library file.
         """
+        if project_path:
+            self.project_path = project_path
         # Ensure symbol definition is in lib_symbols
         self.inject_symbol_into_schematic(schematic_path, library_name, symbol_name)
 

@@ -62,8 +62,11 @@ logs/
 
 # KiCAD
 *.kicad_pcb-bak
+*.kicad_pcb.bak
 *.kicad_sch-bak
+*.kicad_sch.bak
 *.kicad_pro-bak
+*.kicad_pro.bak
 *.kicad_prl
 *-backups/
 fp-info-cache
@@ -82,3 +85,6 @@ data/
 # OS
 Thumbs.db
 Desktop.ini
+
+# Personal notes / local contributions (not for upstream)
+myContribution/
