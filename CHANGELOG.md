@@ -40,6 +40,16 @@ All notable changes to the KiCAD MCP Server project are documented here.
   format version `20250114` (KiCAD 9) after upstream commit `2b38796` accidentally downgraded
   both files to `20240101`. KiCAD 9 rejects schematics with outdated version numbers.
 
+- **CRITICAL: `template_with_symbols_expanded.kicad_sch`**: removed 7 invalid `;;` comment
+  lines introduced by upstream commit `b98c94b`. KiCAD's S-expression parser does not support
+  any comment syntax — it expects every non-empty, non-whitespace line to start with `(`.
+  The comments (`;; PASSIVES`, `;; SEMICONDUCTORS`, `;; INTEGRATED CIRCUITS`, `;; CONNECTORS`,
+  `;; POWER/REGULATORS`, `;; MISC`, `;; TEMPLATE INSTANCES (...)`) caused KiCAD 9 to reject
+  every schematic created from this template with a hard parse error:
+  > `Expecting '(' in <file>.kicad_sch, line 8, offset 5`
+  **Action required for existing projects:** delete every line beginning with `;;` from any
+  `.kicad_sch` file created between upstream commit `b98c94b` and this fix.
+
 ### Maintenance
 
 - `.gitignore`: added `*.kicad_pcb.bak`, `*.kicad_pro.bak` alongside existing `-bak` variants;
