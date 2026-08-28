@@ -45,6 +45,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
+from utils.file_io import read_text_preserve_newline as _read_text
+from utils.file_io import write_text_atomic as _write_text
 from utils.sexpr_format import (
     QUOTED_VALUE,
     escape_sexpr_string,
@@ -72,21 +74,6 @@ _REFERENCE_TOKEN = re.compile(rf"\(reference\s+{QUOTED_VALUE}")
 
 # KiCad 6+ stores a footprint's designator as a property; KiCad 5 used fp_text.
 _FP_TEXT_REFERENCE = re.compile(rf"\(fp_text\s+reference\s+{QUOTED_VALUE}")
-
-
-def _read_text(path: Path) -> Tuple[str, str]:
-    """File text with LF newlines, plus the newline style to write back."""
-    with open(path, "r", encoding="utf-8", newline="") as fh:
-        raw = fh.read()
-    return raw.replace("\r\n", "\n"), ("\r\n" if "\r\n" in raw else "\n")
-
-
-def _write_text(path: Path, text: str, newline: str) -> None:
-    """Atomic write that keeps the file's original newline style."""
-    tmp = path.with_name(path.name + ".mcp-tmp")
-    with open(tmp, "w", encoding="utf-8", newline=newline) as fh:
-        fh.write(text)
-    os.replace(tmp, path)
 
 
 def _read(path: Path, kind: str) -> Tuple[Optional[str], str, Optional[Dict[str, Any]]]:
