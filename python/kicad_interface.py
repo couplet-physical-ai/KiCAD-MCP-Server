@@ -275,7 +275,8 @@ Windows Troubleshooting:
 2. Check PYTHONPATH environment variable points to:
    C:\\Program Files\\KiCad\\9.0\\lib\\python3\\dist-packages
 3. Test with: "C:\\Program Files\\KiCad\\9.0\\bin\\python.exe" -c "import pcbnew"
-4. Log file location: %USERPROFILE%\\.kicad-mcp\\logs\\kicad_interface.log
+4. Log file location: %USERPROFILE%\\.kicad-mcp\\logs\\kicad_interface-<pid>.log
+   (one file per server process; open the newest one)
 5. Run setup-windows.ps1 for automatic configuration
 """
         elif sys.platform == "darwin":
