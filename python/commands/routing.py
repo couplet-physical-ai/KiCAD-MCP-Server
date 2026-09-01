@@ -702,7 +702,7 @@ class RoutingCommands:
                         "y": position["y"],
                         "unit": position["unit"],
                     },
-                    "size": via.GetWidth(pcbnew.F_Cu) / 1000000,
+                    "size": _via_front_width(via) / 1000000,
                     "drill": via.GetDrill() / 1000000,
                     "from_layer": from_layer,
                     "to_layer": to_layer,
@@ -959,7 +959,7 @@ class RoutingCommands:
                                 },
                                 "net": track.GetNetname(),
                                 "netCode": track.GetNetCode(),
-                                "diameter": track.GetWidth() / scale,
+                                "diameter": _via_front_width(track) / scale,
                                 "drill": track.GetDrillValue() / scale,
                             }
                         )
@@ -1404,7 +1404,7 @@ class RoutingCommands:
                 # Create new via
                 new_via = pcbnew.PCB_VIA(self.board)
                 new_via.SetPosition(pcbnew.VECTOR2I(pos.x + offset_x, pos.y + offset_y))
-                new_via.SetWidth(via.GetWidth(pcbnew.F_Cu))
+                new_via.SetWidth(_via_front_width(via))
                 new_via.SetDrill(via.GetDrillValue())
                 new_via.SetViaType(via.GetViaType())
 
@@ -2119,7 +2119,7 @@ class RoutingCommands:
                 is_via = False
             if is_via:
                 pos = track.GetPosition()
-                width = track.GetWidth()
+                width = _via_front_width(track)
                 drill = 0
                 try:
                     drill = track.GetDrill()
@@ -2309,6 +2309,40 @@ class RoutingCommands:
 # is far below any realistic via-to-track clearance, while staying cheap in the
 # obstacle-gathering loop.
 _ARC_CHORD_SEGMENTS = 8
+
+
+def _via_front_width(via: Any) -> int:
+    """Return a via's front-copper width in nanometres, across KiCad 8, 9 and 10.
+
+    KiCad 9 moved vias onto per-layer padstacks, so ``PCB_VIA`` gained
+    ``GetWidth( PCB_LAYER_ID )`` and the ``GetFrontWidth()`` convenience wrapper
+    that forwards to it (``pcbnew/pcb_track.h`` 9.0 lines 433 and 437). The
+    inherited no-argument ``GetWidth()`` survives only to satisfy the parent
+    class and now trips a ``wxCHECK_MSG`` -- ``pcbnew/pcb_track.cpp`` 9.0:381
+    and 10.0:387, "PCB_VIA::GetWidth called without a layer argument". Under a
+    stable Windows build that surfaces as a modal wxWidgets debug alert, once
+    per via, which is what users actually hit.
+
+    The check returns ``m_padStack.Size( PADSTACK::ALL_LAYERS ).x``, so the
+    returned value was never wrong. The defect is the dialog, not the geometry.
+
+    KiCad 8 has neither accessor: its ``PCB_VIA`` only inherits
+    ``PCB_TRACK::GetWidth()`` (``pcbnew/pcb_track.h`` 8.0 line 107), where the
+    call is legal and silent. This server still supports 8.0 in CI, so calling
+    ``GetFrontWidth()`` unconditionally would trade a cosmetic warning on 9/10
+    for a hard ``AttributeError`` on 8 -- and passing ``F_Cu`` explicitly would
+    raise ``TypeError`` there for the same reason.
+
+    Probing for the attribute rather than branching on a version string keeps
+    this correct for any build that backports or drops the accessor, and works
+    with the test doubles, which define only the methods a case needs.
+    """
+    front_width = getattr(via, "GetFrontWidth", None)
+    if front_width is not None:
+        return int(front_width())
+    # KiCad 8 and earlier: the inherited accessor is the only one, and is the
+    # correct call there -- a via had a single width across all layers.
+    return int(via.GetWidth())
 
 
 def _arc_polyline_points(track: Any) -> List[Tuple[int, int]]:
