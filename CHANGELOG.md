@@ -136,6 +136,27 @@ All notable changes to the KiCAD MCP Server project are documented here.
   already used these names. `add_net` keeps `netClass`, which the handler reads
   since #403.
 
+- **`sync_schematic_to_board` reads only the design's own sheets, and wires an
+  unlabeled net instead of dropping it** (#400 reported by @SinanTufekci; #402
+  reported by @joseluu, with the fix for the unlabeled case taken from #358 by
+  @davidwesternall-oss). The pad-to-net map was built from every `.kicad_sch`
+  under the project directory, so KiCad's own `.history/` snapshots, this
+  server's `.mcp-backups/` copies and hand-made backup folders were read as live
+  sheets, and whichever sorted last silently overwrote the live nets (25 wrong
+  pad nets on one real board). The map now follows `(sheet ...)` references from
+  the root, through the walker `backannotate_footprints` already used, promoted
+  to `python/utils/sheet_tree.py`. Separately, a net formed only by a wire
+  between two pins, with no label or power symbol, was named by nothing, so its
+  pads reached the board with no net at all. Such a net now gets the name KiCad
+  itself would give it, `Net-(REF-PadN)`, built from the pad number and taking
+  the candidate that sorts lowest as a plain string; both details were checked
+  against kicad-cli 10.0.0. `PWR_FLAG` symbols no longer seed a bogus `PWR_FLAG`
+  net. The response lists every unmatched pad (`unmatched_pads`, with a
+  warning) and the sheets read (`sheets_scanned`) instead of a ten-entry
+  sample. The unused `skip` imports in this function and in
+  `get_connections_for_net` are gone, so a missing kicad-skip now surfaces the
+  loader's `SchematicLoadError` message there too (#393 follow-up).
+
 ### Tooling
 
 - **Documentation trued up to the shipped server, and the tool inventory is now

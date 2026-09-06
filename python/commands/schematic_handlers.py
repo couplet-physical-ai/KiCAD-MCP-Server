@@ -2767,13 +2767,18 @@ class SchematicHandlersMixin:
             logger.error(f"Error running ERC: {str(e)}")
             return {"success": False, "message": str(e)}
 
-    def _build_hierarchical_pad_net_map(self, project_sch_path: str):
-        """Walk all .kicad_sch files in the project and build a {(ref, pin_num): net_name} map.
+    def _build_hierarchical_pad_net_map(self, project_sch_path: str, sheets_out=None):
+        """Walk the sheets reachable from the root schematic and build a
+        {(ref, pin_num): net_name} map.
 
-        Handles hierarchical schematics by scanning every sub-sheet file.  Net names
-        from global_label / hierarchical_label / local label / power symbols are all
-        collected.  Wire connectivity is traced via BFS so labels not placed directly
-        on a pin endpoint still reach through wire segments.
+        Handles hierarchical schematics by following ``(sheet ...)`` references
+        from the root.  Net names from global_label / hierarchical_label / local
+        label / power symbols are all collected, and a wired net with no label at
+        all gets the ``Net-(REF-PadN)`` name KiCad would give it.  Wire
+        connectivity is traced via BFS so labels not placed directly on a pin
+        endpoint still reach through wire segments.
+
+        ``sheets_out``, when given, receives the path of every sheet read.
 
         Returns: (pad_net_map, net_names_set)
         """
@@ -2781,7 +2786,7 @@ class SchematicHandlersMixin:
         from pathlib import Path
 
         from commands.pin_locator import PinLocator
-        from skip import Schematic
+        from utils.sheet_tree import sheet_tree
 
         TOLERANCE = 0.5  # mm; schematic grid is 1.27 mm so 0.5 is safe
 
@@ -2802,13 +2807,22 @@ class SchematicHandlersMixin:
                     return name
             return None
 
-        project_dir = Path(project_sch_path).parent
         pad_net_map: dict = {}
         all_net_names: set = set()
         pin_locator = PinLocator()
 
-        sch_files = sorted(project_dir.rglob("*.kicad_sch"))
-        logger.info(f"_build_hierarchical_pad_net_map: scanning {len(sch_files)} schematic files")
+        # Only the sheets reachable from the root are part of the design. A
+        # recursive glob of the project directory also read KiCad's .history/
+        # snapshots, this server's .mcp-backups/ copies and hand-made backup
+        # folders as live sheets, and whichever copy sorted last silently
+        # overwrote the live sheet's nets (#400).
+        sch_files = sheet_tree(Path(project_sch_path))
+        if sheets_out is not None:
+            sheets_out.extend(str(p) for p in sch_files)
+        logger.info(
+            f"_build_hierarchical_pad_net_map: scanning {len(sch_files)} sheet(s): "
+            + ", ".join(p.name for p in sch_files)
+        )
 
         for sch_path in sch_files:
             # A broken sheet must fail the sync loudly: silently skipping it
@@ -2831,11 +2845,19 @@ class SchematicHandlersMixin:
                     except Exception:
                         pass
 
-            # Power symbols (#PWR / #FLG): value property IS the net name; use pin 1 pos
+            # Power symbols (#PWR): the Value property IS the net name; seed
+            # every pin position with it.
+            #
+            # #FLG (PWR_FLAG) is deliberately excluded. Its Value is the literal
+            # string "PWR_FLAG", an ERC marker rather than a net name. Treating
+            # it as one invented a bogus "PWR_FLAG" net and, worse, stamped that
+            # name onto the flag's pin, from where the BFS below propagated it
+            # over the real net. A PWR_FLAG takes whatever net it is wired to;
+            # it never names one.
             for sym in getattr(sch, "symbol", None) or []:
                 try:
                     ref = sym.property.Reference.value
-                    if not (ref.startswith("#PWR") or ref.startswith("#FLG")):
+                    if not ref.startswith("#PWR"):
                         continue
                     net_name = sym.property.Value.value
                     if not net_name:
@@ -2887,7 +2909,8 @@ class SchematicHandlersMixin:
                         visited.add(neighbor)
                         queue.append(neighbor)
 
-            # ── 3. Match component pin positions to net names ────────────────
+            # ── 3. Collect real (non-power) symbol pins with their positions ──
+            sym_pins = []  # (ref, pin_num, (px, py))
             for sym in getattr(sch, "symbol", None) or []:
                 try:
                     ref = sym.property.Reference.value
@@ -2898,9 +2921,60 @@ class SchematicHandlersMixin:
 
                 pin_positions = pin_locator.get_all_symbol_pins(sch_path, ref)
                 for pin_num, (px, py) in pin_positions.items():
-                    net = nearby_net((px, py), point_net)
-                    if net:
-                        pad_net_map[(ref, pin_num)] = net
+                    sym_pins.append((ref, pin_num, (px, py)))
+
+            # ── 3b. Name wire clusters that carry no label ────────────────────
+            # A net formed only by a wire between component pins -- no label, no
+            # power symbol -- was named by nothing above, so its pads reached the
+            # board with no net at all and the connection silently vanished from
+            # the layout (#402). KiCad names such a net itself; the rule, checked
+            # against kicad-cli 10.0.0 on synthetic schematics, is
+            # "Net-(REF-PadN)" built from the pad NUMBER (the pin's name is not
+            # used even when it has one), choosing the candidate that sorts
+            # lowest as a plain string, so R10 beats R2. Step 2's BFS floods a
+            # name across a whole connected cluster, so a cluster is either
+            # wholly named or wholly unnamed, and testing one point suffices.
+            def in_cluster(pt, cluster):
+                if snap(*pt) in cluster:
+                    return True
+                x, y = pt
+                return any(
+                    abs(x - cx) < TOLERANCE and abs(y - cy) < TOLERANCE for cx, cy in cluster
+                )
+
+            clustered: set = set()
+            for seed in sorted(all_wire_pts):
+                if seed in point_net or seed in clustered:
+                    continue
+                cluster = set()
+                stack = [seed]
+                clustered.add(seed)
+                while stack:
+                    cur = stack.pop()
+                    cluster.add(cur)
+                    for neighbor in point_adj[cur]:
+                        if neighbor not in clustered:
+                            clustered.add(neighbor)
+                            stack.append(neighbor)
+
+                candidates = [
+                    f"Net-({ref}-Pad{pin_num})"
+                    for ref, pin_num, pt in sym_pins
+                    if in_cluster(pt, cluster)
+                ]
+                # A single pin on a wire stub is a dangling wire, not a net.
+                if len(candidates) < 2:
+                    continue
+                auto_name = min(candidates)
+                for pt in cluster:
+                    point_net[pt] = auto_name
+                all_net_names.add(auto_name)
+
+            # ── 3c. Match component pin positions to net names ───────────────
+            for ref, pin_num, (px, py) in sym_pins:
+                net = nearby_net((px, py), point_net)
+                if net:
+                    pad_net_map[(ref, pin_num)] = net
 
         logger.info(
             f"_build_hierarchical_pad_net_map: {len(pad_net_map)} pin→net assignments, "
@@ -2961,8 +3035,11 @@ class SchematicHandlersMixin:
                     "message": f"Schematic not found. Provide schematicPath. Tried: {schematic_path}",
                 }
 
-            # Build hierarchical pad→net map (walks all sub-sheets)
-            pad_net_map, net_names = self._build_hierarchical_pad_net_map(schematic_path)
+            # Build the pad->net map from the sheets reachable from the root
+            sheets_scanned: list = []
+            pad_net_map, net_names = self._build_hierarchical_pad_net_map(
+                schematic_path, sheets_out=sheets_scanned
+            )
 
             # Add missing footprints from the schematic to the board *before*
             # we add nets and assign pads — F8 in KiCad does this implicitly
@@ -3015,16 +3092,38 @@ class SchematicHandlersMixin:
                 f"sync_schematic_to_board: {len(added_nets)} nets added, "
                 f"{len(added_footprints)} footprints added, {assigned_pads} pads assigned"
             )
+            # Every wired pin now carries a net (an unlabeled wire gets a
+            # Net-(REF-PadN) name), so an unmatched pad is one the schematic
+            # does not wire at all, or a pad the symbol does not have. Report
+            # all of them: a ten-entry sample buried a 25-pad failure (#400).
+            warnings: List[str] = []
+            if unmatched:
+                warnings.append(
+                    f"{len(unmatched)} pad(s) have no net in the schematic and were left "
+                    "unchanged: " + ", ".join(unmatched)
+                )
+                logger.warning("sync_schematic_to_board: " + warnings[-1])
+            root_dir = Path(schematic_path).parent
+            sheet_names = []
+            for p in sheets_scanned:
+                try:
+                    sheet_names.append(Path(p).relative_to(root_dir).as_posix())
+                except ValueError:
+                    sheet_names.append(Path(p).name)
             return {
                 "success": True,
                 "message": (
                     f"PCB updated from schematic: {len(added_footprints)} footprints added, "
                     f"{len(added_nets)} nets added, {assigned_pads} pads assigned"
                 ),
+                "sheets_scanned": sheet_names,
                 "nets_added": added_nets,
                 "nets_total": len(net_names),
                 "pads_assigned": assigned_pads,
+                "unmatched_pad_count": len(unmatched),
+                "unmatched_pads": unmatched,
                 "unmatched_pads_sample": unmatched[:10],
+                "warnings": warnings,
                 "footprints_added": added_footprints,
                 "footprints_skipped": skipped_footprints,
             }
