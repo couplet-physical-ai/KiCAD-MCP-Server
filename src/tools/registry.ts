@@ -407,7 +407,7 @@ export function searchTools(query: string): SearchResult[] {
       matches.push({
         category: "direct",
         tool: toolName,
-        description: `${toolName} (direct tool — call directly, no execute_tool needed)`,
+        description: `${toolName} (direct tool — call directly by name)`,
       });
     }
   }
