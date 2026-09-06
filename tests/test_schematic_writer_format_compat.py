@@ -9,12 +9,8 @@ bare "Failed to load schematic" that names neither a token nor a line:
    (20250114) file became unloadable -- including this repo's own
    ``minimal``/``empty``/``template_with_symbols`` templates, which declare
    20250114.
-2. Property values were interpolated into the s-expression unescaped. Several
-   stock library descriptions embed double quotes (``power:GND`` is
-   ``Power symbol creates a global label with name "GND" , ground``), so the
-   first inner quote closed the token early and corrupted the block. Note the
-   file's parentheses still balance afterwards and sexpdata still parses it,
-   which is what made this silent.
+2. Property values were interpolated into the s-expression unescaped. Fixed in
+   #354 and pinned by tests/test_sexpr_escaping.py; not repeated here.
 3. ``add_schematic_component`` dropped the documented ``angle`` and ``mirrorY``
    arguments: the TS layer nests them inside ``component``, and the Python
    handler never read them back out.
@@ -40,6 +36,64 @@ _KICAD_CLI = resolve_kicad_cli()
 V8 = 20231120
 V9 = 20250114
 V10 = 20260101
+
+
+def _standin_library_text(lib_id: str, name: str) -> str:
+    """A one-symbol ``.kicad_sym`` holding the KiCad-authored block that
+    ``python/templates/empty.kicad_sch`` embeds for *lib_id*.
+
+    That template declares 20250114 and its block carries no KiCad 10-only
+    attribute, so the stand-in is what a KiCad 8 or 9 library would hold.
+    """
+    from utils.sexpr_format import match_paren
+
+    text = (TEMPLATES_DIR / "empty.kicad_sch").read_text(encoding="utf-8")
+    start = text.index(f'(symbol "{lib_id}"')
+    block = text[start : match_paren(text, start) + 1].replace(f'"{lib_id}"', f'"{name}"', 1)
+    return (
+        '(kicad_symbol_lib (version 20231120) (generator "kicad_symbol_editor")\n' + block + "\n)\n"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _symbol_library(tmp_path_factory: Any, monkeypatch: Any) -> Any:
+    """Use the installed KiCad libraries when there are any, else a stand-in.
+
+    CI's unit jobs have no KiCad, so ``Device:R`` has to come from somewhere;
+    a developer machine and the integration jobs have the real libraries, which
+    is what the kicad-cli class below must exercise.
+    """
+    from commands.dynamic_symbol_loader import DynamicSymbolLoader
+
+    DynamicSymbolLoader.clear_library_caches()
+    if DynamicSymbolLoader().find_library_file("Device") is None:
+        lib_dir = tmp_path_factory.mktemp("symbols")
+        (lib_dir / "Device.kicad_sym").write_text(
+            _standin_library_text("Device:R", "R"), encoding="utf-8"
+        )
+        monkeypatch.setenv("KICAD_SYMBOL_DIR", str(lib_dir))
+        DynamicSymbolLoader.clear_library_caches()
+    yield
+    DynamicSymbolLoader.clear_library_caches()
+
+
+@pytest.mark.unit
+def test_standin_library_places_a_symbol(tmp_path: Path) -> None:
+    """The stand-in must work end to end, or CI would only prove a skip."""
+    from commands.dynamic_symbol_loader import DynamicSymbolLoader
+
+    lib_dir = tmp_path / "symbols"
+    lib_dir.mkdir()
+    (lib_dir / "Standin.kicad_sym").write_text(
+        _standin_library_text("Device:R", "R"), encoding="utf-8"
+    )
+    sch = _sch_with_version(tmp_path, V9)
+    loader = DynamicSymbolLoader()
+    loader.find_kicad_symbol_libraries = lambda: [lib_dir]  # type: ignore[method-assign]
+    loader.inject_symbol_into_schematic(sch, "Standin", "R")
+    assert loader.create_component_instance(sch, "Standin", "R", reference="R1", x=100, y=100)
+    header = _placed_symbol_header(sch.read_text(), "Standin:R")
+    assert "body_style" not in header
 
 
 # ---------------------------------------------------------------------------
