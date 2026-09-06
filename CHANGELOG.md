@@ -84,6 +84,21 @@ All notable changes to the KiCAD MCP Server project are documented here.
   first on PATH - the v10 failure mode where `pcbnew` imports in one interpreter
   and not the other. The two scripts' probing logic is kept in sync by
   cross-reference comments, since both carry a copy of `Get-KiCadInfo`.
+- **`modify_trace` reachable by UUID, `add_net` honours `netClass`** (#403,
+  reported by @joseluu): the tool's zod schema declares `traceUuid` but the
+  handler read `uuid`, so the documented UUID path always answered "Missing
+  trace identifier" and only the position fallback worked. `add_net` had the
+  same shape - schema `netClass`, handler `class` - so the net class was
+  silently dropped. Both handlers now read the schema's name and keep the old
+  key for JSON-RPC callers. The slip had recurred often enough (#392 found five
+  more in the JSON-RPC schema) that a new ratcheting test,
+  `tests/test_schema_param_names.py`, compares every tool's declared parameter
+  names against the keys its Python handler actually reads, on both schema
+  layers, and checks that every TypeScript tool has a Python route. What it
+  found on first run is frozen as known lists that may only shrink - 12 tools
+  with an ignored Node-facing parameter, 16 with a stale JSON-RPC one, and six
+  tools whose command has no route at all - and tracked in #407. Also fixes
+  the `microViaD iameter` typo in the JSON-RPC schema for `set_design_rules`.
 
 ## [2.7.0] - 2026-08-20
 

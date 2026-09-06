@@ -323,7 +323,9 @@ class RoutingCommands:
                 }
 
             name = params.get("name")
-            net_class = params.get("class")
+            # The zod schema declares `netClass`; `class` is the historical key the
+            # JSON-RPC schema used, kept so existing callers keep working.
+            net_class = params.get("netClass") or params.get("class")
 
             if not name:
                 return {
@@ -1321,7 +1323,10 @@ class RoutingCommands:
                 }
 
             # Identification parameters
-            trace_uuid = params.get("uuid")
+            # The zod schema (src/tools/routing.ts) declares `traceUuid`, matching
+            # delete_trace; `uuid` is kept for callers of the JSON-RPC path that
+            # predate the schema alignment (#403).
+            trace_uuid = params.get("traceUuid") or params.get("uuid")
             position = params.get("position")  # {x, y, unit}
 
             # Modification parameters
@@ -1333,7 +1338,7 @@ class RoutingCommands:
                 return {
                     "success": False,
                     "message": "Missing trace identifier",
-                    "errorDetails": "Provide either 'uuid' or 'position' to identify the trace",
+                    "errorDetails": "Provide either 'traceUuid' or 'position' to identify the trace",
                 }
 
             scale = 1000000  # nm to mm conversion
