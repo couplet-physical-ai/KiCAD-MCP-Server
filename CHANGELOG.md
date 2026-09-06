@@ -136,6 +136,23 @@ All notable changes to the KiCAD MCP Server project are documented here.
   already used these names. `add_net` keeps `netClass`, which the handler reads
   since #403.
 
+- **Placing a symbol no longer writes KiCad 10-only attributes into KiCad 8 or 9
+  schematics, and `add_schematic_component` honours `angle` and `mirrorY`**
+  (#351 by @Rotario, taken over; the orientation fix was also in #358 by
+  @davidwesternall-oss). `create_component_instance` wrote `(body_style 1)` and
+  `(in_pos_files yes)` into every placed symbol regardless of the file's
+  declared format. Neither token exists in a KiCad 8 (20231120) or KiCad 9
+  (20250114) file, and KiCad's parser refuses tokens it does not know, so a
+  KiCad 8 or 9 user got "Failed to load schematic" from a file this server had
+  just edited; four of the five shipped templates declare 20250114. Both tokens
+  are now emitted only into files whose `(version ...)` is 20260101 or later,
+  and a file with no version token keeps the KiCad 10 output. KiCad 10 itself
+  accepts a v9 file either way (checked with kicad-cli 10.0.0). Separately, the
+  TypeScript layer nests the documented `angle` and `mirrorY` inside `component`
+  and the Python handler never read them, so every symbol landed unrotated and
+  callers had to follow up with `rotate_schematic_component`; both are read
+  now. The escaping half of #351 had already landed in #354.
+
 ### Tooling
 
 - **Documentation trued up to the shipped server, and the tool inventory is now

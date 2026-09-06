@@ -23,6 +23,15 @@ from utils.sexpr_format import (
 
 logger = logging.getLogger("kicad_interface")
 
+#: First schematic file-format version that accepts ``(body_style ...)`` and
+#: ``(in_pos_files ...)`` inside a placed ``(symbol ...)``. Both tokens are
+#: KiCad 10 additions: a KiCad 8 (20231120) or KiCad 9 (20250114) file never
+#: contains them, and those KiCad releases reject a schematic carrying a token
+#: they do not know with a bare "Failed to load schematic". KiCad 10 accepts a
+#: v9 file either way (kicad-cli 10.0.0), so gating on the file's declared
+#: version costs nothing there and keeps the file loadable everywhere else.
+_KICAD10_SCH_VERSION = 20260101
+
 # Module-level caches shared across DynamicSymbolLoader instances.
 # A fresh loader is created for every add_component call (see
 # schematic_handlers), so instance-level caches never survive — every
@@ -828,6 +837,29 @@ class DynamicSymbolLoader:
         except Exception:
             return []
 
+    @staticmethod
+    def _read_sch_version(content: str) -> Optional[int]:
+        """Return the ``(version NNNNNNNN)`` token of a schematic, or None.
+
+        The file's own declared version — not the installed KiCad version —
+        decides which tokens are legal, because KiCad dispatches to a parser per
+        format version. A KiCad 10 binary still refuses a v10-only token inside a
+        file that declares 20231120.
+        """
+        m = re.search(r"\(version\s+(\d+)\)", content)
+        return int(m.group(1)) if m else None
+
+    @classmethod
+    def _supports_kicad10_symbol_tokens(cls, content: str) -> bool:
+        """Whether this schematic accepts ``body_style`` / ``in_pos_files``.
+
+        Unknown/absent version is treated as KiCad 10 to preserve the previous
+        behaviour for freshly generated files, which is what the templates and
+        the create_schematic fallback emit.
+        """
+        version = cls._read_sch_version(content)
+        return version is None or version >= _KICAD10_SCH_VERSION
+
     def _build_instance_path(self, schematic_path: Path) -> str:
         """Return the symbol instance path for symbols placed in ``schematic_path``.
 
@@ -1094,20 +1126,31 @@ class DynamicSymbolLoader:
 
         body = "\n".join(part for part in [properties_str, pins_str, instances_str] if part)
 
+        with open(schematic_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Emit the KiCad 10-only symbol attributes only into files whose declared
+        # format version accepts them (#351). A KiCad 8 or 9 file never contains
+        # them and those releases refuse a schematic carrying a token they do not
+        # know. Everything else on this line is common to v8/v9/v10.
+        if self._supports_kicad10_symbol_tokens(content):
+            attrs_line = (
+                "    (body_style 1) (exclude_from_sim no) (in_bom yes) (on_board yes)"
+                " (in_pos_files yes) (dnp no)\n"
+            )
+        else:
+            attrs_line = "    (exclude_from_sim no) (in_bom yes) (on_board yes) (dnp no)\n"
+
         mirror_str = " (mirror y)" if mirror_y else ""
         instance_block = (
             f'  (symbol (lib_id "{escape_sexpr_string(full_lib_id)}")'
             f" (at {_fmt(x)} {_fmt(y)} {_fmt(angle)})"
             f"{mirror_str} (unit {unit})\n"
-            "    (body_style 1) (exclude_from_sim no) (in_bom yes) (on_board yes)"
-            " (in_pos_files yes) (dnp no)\n"
+            f"{attrs_line}"
             f'    (uuid "{new_uuid}")\n'
             f"{body}\n"
             "  )"
         )
-
-        with open(schematic_path, "r", encoding="utf-8") as f:
-            content = f.read()
 
         # Insert before (sheet_instances using direct string search.
         # This works for both pretty-printed and sexpdata-compacted single-line files.
