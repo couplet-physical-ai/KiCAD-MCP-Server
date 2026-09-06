@@ -471,11 +471,17 @@ if ($script:Results.Errors.Count -gt 0) {
     }
 }
 
-# Check for log file
-$logPath = "$env:USERPROFILE\.kicad-mcp\logs\kicad_interface.log"
-if (Test-Path $logPath) {
-    Write-Host "`nLog file location:" -ForegroundColor Cyan
-    Write-Host "  $logPath" -ForegroundColor Gray
+# Check for log files. Since v2.7.0 each server process writes its own file,
+# named kicad_interface-<pid>.log, so report the most recently written one.
+$logDir = "$env:USERPROFILE\.kicad-mcp\logs"
+$latestLog = if (Test-Path $logDir) {
+    Get-ChildItem -Path $logDir -Filter "kicad_interface-*.log" -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+}
+if ($latestLog) {
+    Write-Host "`nMost recent log file:" -ForegroundColor Cyan
+    Write-Host "  $($latestLog.FullName)" -ForegroundColor Gray
+    Write-Host "  (one log file per server process, in $logDir)" -ForegroundColor Gray
 }
 
 # Success criteria
