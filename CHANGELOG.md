@@ -74,7 +74,7 @@ All notable changes to the KiCAD MCP Server project are documented here.
 
 ### Bug Fixes
 
-- **A missing kicad-skip no longer kills every tool at startup** (#389).
+- **A missing kicad-skip no longer kills every tool at startup** (#389, @AmirF194).
   Six modules imported `from skip import Schematic` at their own top level.
   Two of them sit on the import chain `kicad_interface` -> `schematic_handlers`
   -> `library_schematic`/`schematic`, which runs before the process reaches
@@ -110,6 +110,49 @@ All notable changes to the KiCAD MCP Server project are documented here.
   with an ignored Node-facing parameter, 16 with a stale JSON-RPC one, and six
   tools whose command has no route at all - and tracked in #407. Also fixes
   the `microViaD iameter` typo in the JSON-RPC schema for `set_design_rules`.
+- **No more `PCB_VIA::GetWidth` assert dialog on KiCad 9/10, and KiCad 8 works
+  again** (#398, @scorp508): KiCad 9 moved vias onto per-layer padstacks, so the
+  no-argument `GetWidth()` a via inherits pops a modal wxWidgets assert, once per
+  via, when listing traces or stitching a ground plane. Two earlier call sites had
+  dodged the dialog with `GetWidth(pcbnew.F_Cu)`, which does not exist on KiCad 8.
+  A `_via_front_width()` shim now prefers `GetFrontWidth()` where it exists and
+  falls back to the bare call on KiCad 8. Also fixes a MagicMock test double that
+  had the stitching-via tests running with 1 nm vias.
+- **Discovery tools no longer tell clients to call the deleted `execute_tool`**
+  (#397, @scorp508): `execute_tool` was removed in May, but `list_tool_categories`,
+  `get_category_tools` and `search_tools` still said to use it, sending models
+  after a tool that does not exist. The text now says what is true: every tool is
+  callable directly by name. A test checks the runtime output for stale names.
+- **KiCad launched from PATH is detected on Linux** (#401, @famez): the process
+  probe required `/kicad` or `/pcbnew` with a leading slash in the `ps` line, so a
+  KiCad started from a desktop launcher or a terminal (bare `argv[0]`) reported
+  "not running". An exact basename match is accepted as well; the Windows branch
+  is untouched.
+- **Five JSON-RPC schema parameters renamed to what the handlers read** (#392,
+  @karpovantonme): `set_active_layer` takes `layer`, `add_net` takes `name`,
+  `add_copper_pour` takes `net`, `export_gerber` takes `outputDir`, `delete_trace`
+  takes `traceUuid`. This is the schema the standalone JSON-RPC path's `tools/list`
+  returns (`python/schemas/tool_schemas.py`); the zod schemas Node clients see
+  already used these names. `add_net` keeps `netClass`, which the handler reads
+  since #403.
+
+### Tooling
+
+- **Documentation trued up to the shipped server, and the tool inventory is now
+  generated and gated in CI** (#396, @scorp508): the inventory listed 137 tools
+  while the server registers 233 (173 of them indexed by `search_tools`); other
+  documents still described the tool-gating design removed a year ago, and two
+  documented tools did not exist. A generator script now derives
+  `docs/TOOL_INVENTORY.md` from the tool sources and the registry, preserving
+  hand-written descriptions, and `npm run docs:tools:check` runs in the
+  TypeScript CI job so the inventory cannot drift again. Around twenty documents
+  corrected.
+- **One implementation of the KiCad text-file helpers** (#395, @kkkhs, closes
+  #380): the four private `_read_text` / `_write_text` copies in
+  `add_symbol_property`, `backannotate_footprints`, `library_tables` and
+  `set_symbol_pin_type` are replaced by `python/utils/file_io.py`
+  (newline-preserving read, atomic write). Two of the four gain temp-file cleanup
+  on a failed write, which the other two already had.
 
 ## [2.7.0] - 2026-08-20
 
