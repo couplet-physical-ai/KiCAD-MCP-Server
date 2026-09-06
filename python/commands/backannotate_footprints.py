@@ -54,6 +54,8 @@ from utils.sexpr_format import (
     match_paren,
     unescape_sexpr_string,
 )
+from utils.sheet_tree import _real_key
+from utils.sheet_tree import sheet_tree as _sheet_tree
 
 logger = logging.getLogger("kicad_interface")
 
@@ -68,7 +70,6 @@ _FOOTPRINT_HEAD = re.compile(rf"\(footprint\s+{QUOTED_VALUE}")
 _INSTANCE_HEAD = re.compile(r"\(symbol[\s(]")
 
 # '(sheet ' only -- '(sheet_instances' is a different list at the same depth.
-_SHEET_HEAD = re.compile(r"\(sheet[\s(]")
 
 _REFERENCE_TOKEN = re.compile(rf"\(reference\s+{QUOTED_VALUE}")
 
@@ -238,56 +239,6 @@ def _candidate_references(block: str, props: Dict[str, _Property]) -> List[str]:
         if reference and reference not in ordered:
             ordered.append(reference)
     return ordered
-
-
-def _sub_sheet_files(text: str) -> List[str]:
-    """The ``Sheetfile`` of every ``(sheet ...)`` in one schematic."""
-    files: List[str] = []
-    for offset in iter_child_offsets(text):
-        if not _SHEET_HEAD.match(text, offset):
-            continue
-        end = match_paren(text, offset)
-        if end == -1:
-            continue
-        props = _properties(text[offset : end + 1])
-        prop = props.get("Sheetfile") or props.get("Sheet file")
-        if prop is not None and prop.value:
-            files.append(prop.value)
-    return files
-
-
-def _real_key(path: Path) -> str:
-    """Identity of a file on disk, so the same sheet is never visited twice."""
-    return os.path.normcase(os.path.realpath(str(path)))
-
-
-def _sheet_tree(root: Path) -> List[Path]:
-    """Sheets reachable from *root*, root first, one entry per file on disk.
-
-    Walking the tree is what bounds the edit to the design. Globbing the board's
-    directory also picks up ``.history`` snapshots, backup copies and unrelated
-    projects -- and rewriting a backup destroys the fallback at the same moment
-    as the risky edit.
-    """
-    order: List[Path] = []
-    seen: Set[str] = set()
-    queue: List[Path] = [root]
-    while queue:
-        sheet = queue.pop(0)
-        key = _real_key(sheet)
-        if key in seen:
-            continue
-        seen.add(key)
-        if not sheet.is_file():
-            continue
-        order.append(sheet)
-        try:
-            text, _newline = _read_text(sheet)
-        except (OSError, UnicodeDecodeError):
-            continue
-        for name in _sub_sheet_files(text):
-            queue.append(sheet.parent / name)
-    return order
 
 
 def _sheets_beside(board_path: Path) -> List[Path]:
