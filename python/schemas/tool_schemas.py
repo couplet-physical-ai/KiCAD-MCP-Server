@@ -457,12 +457,12 @@ BOARD_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "layerName": {
+                "layer": {
                     "type": "string",
                     "description": "Name of the layer to make active (e.g., F.Cu, B.Cu, Edge.Cuts)",
                 }
             },
-            "required": ["layerName"],
+            "required": ["layer"],
         },
     },
     {
@@ -1373,17 +1373,17 @@ ROUTING_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "netName": {
+                "name": {
                     "type": "string",
                     "description": "Name of the net (e.g., VCC, GND, SDA)",
                     "minLength": 1,
                 },
-                "netClass": {
+                "class": {
                     "type": "string",
                     "description": "Optional net class to assign (must exist first)",
                 },
             },
-            "required": ["netName"],
+            "required": ["name"],
         },
     },
     {
@@ -1453,7 +1453,7 @@ ROUTING_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "uuid": {
+                "traceUuid": {
                     "type": "string",
                     "description": "UUID of a specific trace to delete",
                 },
@@ -1802,7 +1802,7 @@ ROUTING_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "netName": {
+                "net": {
                     "type": "string",
                     "description": "Net to connect this copper pour to (e.g., GND, VCC)",
                 },
@@ -1833,7 +1833,7 @@ ROUTING_TOOLS = [
                     "minItems": 3,
                 },
             },
-            "required": ["netName", "layer", "outline"],
+            "required": ["net", "layer", "outline"],
         },
     },
     {
@@ -2220,7 +2220,7 @@ EXPORT_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "outputPath": {
+                "outputDir": {
                     "type": "string",
                     "description": "Directory path for output files",
                 },
@@ -2235,7 +2235,7 @@ EXPORT_TOOLS = [
                     "default": True,
                 },
             },
-            "required": ["outputPath"],
+            "required": ["outputDir"],
         },
     },
     {
