@@ -1378,7 +1378,7 @@ ROUTING_TOOLS = [
                     "description": "Name of the net (e.g., VCC, GND, SDA)",
                     "minLength": 1,
                 },
-                "class": {
+                "netClass": {
                     "type": "string",
                     "description": "Optional net class to assign (must exist first)",
                 },

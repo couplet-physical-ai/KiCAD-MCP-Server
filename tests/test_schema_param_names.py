@@ -75,14 +75,11 @@ KNOWN_ZOD_UNREAD: Dict[str, Set[str]] = {
 
 # tool_schemas.py property names the Python handler never reads.
 KNOWN_JSONRPC_UNREAD: Dict[str, Set[str]] = {
-    "add_copper_pour": {"netName"},
-    "add_net": {"netName"},
     "add_schematic_component": {"symbol"},
     "add_via": {"diameter", "netName"},
     "align_components": {"direction"},
-    "delete_trace": {"uuid"},
     "duplicate_component": {"offsetX", "offsetY", "sourceReference"},
-    "export_gerber": {"includeDrillFiles", "outputPath"},
+    "export_gerber": {"includeDrillFiles"},
     "export_pdf": {"colorMode"},
     "get_footprint_info": {"footprint"},
     "place_component_array": {"footprint", "startNumber", "startX", "startY"},
@@ -90,7 +87,6 @@ KNOWN_JSONRPC_UNREAD: Dict[str, Set[str]] = {
     "route_trace": {"netName", "points"},
     "run_drc": {"includeWarnings"},
     "search_footprints": {"query"},
-    "set_active_layer": {"layerName"},
 }
 
 # TypeScript tools that call a Python command with no entry in command_routes:
