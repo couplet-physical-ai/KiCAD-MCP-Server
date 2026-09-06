@@ -1678,7 +1678,7 @@ ROUTING_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "uuid": {
+                "traceUuid": {
                     "type": "string",
                     "description": "UUID of the trace to modify",
                 },
@@ -2112,7 +2112,7 @@ DESIGN_RULE_TOOLS = [
                     "type": "number",
                     "description": "Minimum via drill diameter in millimeters",
                 },
-                "microViaD iameter": {
+                "microViaDiameter": {
                     "type": "number",
                     "description": "Minimum micro-via diameter in millimeters",
                 },
