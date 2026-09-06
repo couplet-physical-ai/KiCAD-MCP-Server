@@ -74,6 +74,17 @@ All notable changes to the KiCAD MCP Server project are documented here.
 
 ### Bug Fixes
 
+- **A missing kicad-skip no longer kills every tool at startup** (#389).
+  Six modules imported `from skip import Schematic` at their own top level.
+  Two of them sit on the import chain `kicad_interface` -> `schematic_handlers`
+  -> `library_schematic`/`schematic`, which runs before the process reaches
+  its own try/except import guard, so a missing kicad-skip raised an
+  unhandled `ModuleNotFoundError` at startup instead of the intended clean
+  JSON error. Three of the six modules never actually used the import and
+  had it removed; the other three guard it now. `create_schematic` and
+  `load_schematic`, the two tools that genuinely need kicad-skip, raise a
+  `SchematicLoadError` naming the exact `pip install kicad-skip` command
+  instead of taking the rest of the server down with them.
 - **`setup-windows.ps1` / `setup-windows-opencode.ps1`** (#356, @LiJoeAllen): find
   KiCad on any drive. The registry uninstall keys (HKLM, WOW6432Node, HKCU) and the
   installer's `KICAD<ver>_*` environment variables are probed before the hard-coded
