@@ -15,6 +15,19 @@ All notable changes to the KiCAD MCP Server project are documented here.
   remove the override and revert to the automatic/class color. Cosmetic
   only — does not affect routing or design rules.
 
+### Bug Fixes
+
+- **`setup-windows.ps1` / `setup-windows-opencode.ps1`** (#356, @LiJoeAllen): find
+  KiCad on any drive. The registry uninstall keys (HKLM, WOW6432Node, HKCU) and the
+  installer's `KICAD<ver>_*` environment variables are probed before the hard-coded
+  `C:\Program Files` paths, and the version root is derived from `DisplayIcon` by
+  walking up out of `bin\`, so a `D:\KiCad\10.0` install no longer ends in "KiCAD
+  not found". The generated config now pins `KICAD_PYTHON` to the bundled
+  interpreter, so the server runs KiCad's own Python rather than whichever one is
+  first on PATH - the v10 failure mode where `pcbnew` imports in one interpreter
+  and not the other. The two scripts' probing logic is kept in sync by
+  cross-reference comments, since both carry a copy of `Get-KiCadInfo`.
+
 ## [2.7.0] - 2026-08-20
 
 ### New Tools
