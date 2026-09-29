@@ -4,6 +4,15 @@ All notable changes to the KiCAD MCP Server project are documented here.
 
 ## [Unreleased]
 
+### New Features
+
+- **Linux setup helper**: `setup-linux.sh` detects KiCad's Python bindings,
+  verifies runtime dependencies, previews Claude Desktop configuration, and
+  merges its server entry while preserving unrelated settings and backing up
+  the original file. Generated paths keep virtual-environment packages ahead
+  of system modules to avoid mixed CFFI versions. `--verify` and `--apply`
+  reject missing or broken dependencies in the generated environment.
+
 ### Tooling
 
 - **Release runs for the same tag no longer race.** Pushing the v2.8.2 tag
