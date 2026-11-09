@@ -1,0 +1,171 @@
+# Roadrunner CI (Woodpecker + Dagger, https://cicd.apps.example.com): the port of .github/workflows/ci.yml (TypeScript on Node 20/22, Python 3.9-3.12, real-pcbnew smoke on KiCad 8/9/10, pre-commit + docs checks).
+# Every step runs in parallel inside ci-runner on Linux x64; the pipeline status replaces the
+# "CI passed" aggregator job. The Windows/macOS TypeScript legs and the Codecov upload are not
+# ported (no Windows runner here; macOS would only repeat the Linux tests).
+# `$$` escapes `$` for Woodpecker. Docs: https://cicd.docs.example.com/roadrunner/
+labels:
+  tier: "0"
+when:
+  - event: pull_request
+  - event: [push, manual]
+    branch: main
+steps:
+  # typescript-tests. `npm ci` runs the `prepare` script (tsc), so the install layer needs
+  # tsconfig.json and src/.
+  - name: typescript-node20
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 npm --src=. --repo="$${CI_REPO_NAME,,}" --node=20
+        --scripts=build,lint:ts,test:ts,docs:tools:check --dep-include='tsconfig.json,src/**'
+        --npm-registry=https://npm.dev.example.com/
+        --dep-cache=registry.dev.example.com/cache
+        --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
+  - name: typescript-node22
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 npm --src=. --repo="$${CI_REPO_NAME,,}" --node=22
+        --scripts=build,lint:ts,test:ts,docs:tools:check --dep-include='tsconfig.json,src/**'
+        --npm-registry=https://npm.dev.example.com/
+        --dep-cache=registry.dev.example.com/cache
+        --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
+  # python-tests. A JRE because the freerouting suites resolve `java`; Black, MyPy and the
+  # advisory Pylint run once, on 3.12.
+  - name: python-3.9
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 python-plain --src=. --repo="$${CI_REPO_NAME,,}" --python=3.9
+        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2
+        --run='pytest --cov=python --cov-report=xml'
+        --dep-cache=registry.dev.example.com/cache
+        --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
+  - name: python-3.10
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 python-plain --src=. --repo="$${CI_REPO_NAME,,}" --python=3.10
+        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2
+        --run='pytest --cov=python --cov-report=xml'
+        --dep-cache=registry.dev.example.com/cache
+        --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
+  - name: python-3.11
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 python-plain --src=. --repo="$${CI_REPO_NAME,,}" --python=3.11
+        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2
+        --run='pytest --cov=python --cov-report=xml'
+        --dep-cache=registry.dev.example.com/cache
+        --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
+  - name: python-3.12
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 python-plain --src=. --repo="$${CI_REPO_NAME,,}" --python=3.12
+        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2
+        --run='black --check python/ && mypy python/ && pylint python/ --exit-zero && pytest --cov=python --cov-report=xml'
+        --dep-cache=registry.dev.example.com/cache
+        --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
+  # integration-tests: KiCad from its Launchpad PPA on Ubuntu 24.04, as the GitHub job did, in
+  # the engine-cached --setup layer. kicad-libraries minus kicad-packages3d (3-5 GB of 3D
+  # models the smoke tests never open). pcbnew lands in /usr/lib/python3/dist-packages, so the
+  # system Python 3.12 imports it; the requirements go into a venv that can see it.
+  - name: integration-kicad-8.0
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 container-run --src=. --repo="$${CI_REPO_NAME,,}" --shell=bash
+        --image=public.ecr.aws/docker/library/ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+        --setup='export DEBIAN_FRONTEND=noninteractive; A="-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60";
+        apt-get $$A update -qq && apt-get $$A install -y -qq software-properties-common python3-venv &&
+        timeout 300 add-apt-repository --yes --no-update ppa:kicad/kicad-8.0-releases && apt-get $$A update -qq &&
+        timeout 1500 apt-get $$A install -y -qq --no-install-recommends kicad kicad-symbols kicad-footprints kicad-templates &&
+        rm -rf /var/lib/apt/lists/*'
+        --env=KICAD_USE_REAL_PCBNEW=1
+        --run='kicad-cli version && python3 -c "import pcbnew; print(pcbnew.GetBuildVersion())" &&
+        python3 -m venv --system-site-packages /tmp/venv && /tmp/venv/bin/pip install -q -r requirements.txt -r requirements-dev.txt &&
+        /tmp/venv/bin/pytest tests/test_real_pcbnew_matrix.py tests/test_pymupdf_swig_iterator.py -m "integration and real_pcbnew"'
+        --test-workers=2
+  - name: integration-kicad-9.0
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 container-run --src=. --repo="$${CI_REPO_NAME,,}" --shell=bash
+        --image=public.ecr.aws/docker/library/ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+        --setup='export DEBIAN_FRONTEND=noninteractive; A="-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60";
+        apt-get $$A update -qq && apt-get $$A install -y -qq software-properties-common python3-venv &&
+        timeout 300 add-apt-repository --yes --no-update ppa:kicad/kicad-9.0-releases && apt-get $$A update -qq &&
+        timeout 1500 apt-get $$A install -y -qq --no-install-recommends kicad kicad-symbols kicad-footprints kicad-templates &&
+        rm -rf /var/lib/apt/lists/*'
+        --env=KICAD_USE_REAL_PCBNEW=1
+        --run='kicad-cli version && python3 -c "import pcbnew; print(pcbnew.GetBuildVersion())" &&
+        python3 -m venv --system-site-packages /tmp/venv && /tmp/venv/bin/pip install -q -r requirements.txt -r requirements-dev.txt &&
+        /tmp/venv/bin/pytest tests/test_real_pcbnew_matrix.py tests/test_pymupdf_swig_iterator.py -m "integration and real_pcbnew"'
+        --test-workers=2
+  - name: integration-kicad-10.0
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 container-run --src=. --repo="$${CI_REPO_NAME,,}" --shell=bash
+        --image=public.ecr.aws/docker/library/ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+        --setup='export DEBIAN_FRONTEND=noninteractive; A="-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60";
+        apt-get $$A update -qq && apt-get $$A install -y -qq software-properties-common python3-venv &&
+        timeout 300 add-apt-repository --yes --no-update ppa:kicad/kicad-10.0-releases && apt-get $$A update -qq &&
+        timeout 1500 apt-get $$A install -y -qq --no-install-recommends kicad kicad-symbols kicad-footprints kicad-templates &&
+        rm -rf /var/lib/apt/lists/*'
+        --env=KICAD_USE_REAL_PCBNEW=1
+        --run='kicad-cli version && python3 -c "import pcbnew; print(pcbnew.GetBuildVersion())" &&
+        python3 -m venv --system-site-packages /tmp/venv && /tmp/venv/bin/pip install -q -r requirements.txt -r requirements-dev.txt &&
+        /tmp/venv/bin/pytest tests/test_real_pcbnew_matrix.py tests/test_pymupdf_swig_iterator.py -m "integration and real_pcbnew"'
+        --test-workers=2
+  # code-quality + docs-check. pre-commit asks git for the tracked files, so the checkout becomes
+  # a one-commit repository first (.gitignore keeps node_modules/ and dist/ out). Debian's
+  # Python 3.11 runs the hooks (mypy and black pin their target versions in pyproject.toml).
+  # npm audit stays advisory; the JSON listing reports and never fails, as before.
+  - name: code-quality
+    image: bash
+    environment:
+      OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
+      OTEL_EXPORTER_OTLP_LOGS_PROTOCOL: http/protobuf
+    commands:
+      - >-
+        ci-runner v0.10.1 npm --src=. --repo="$${CI_REPO_NAME,,}" --node=20
+        --dep-include='tsconfig.json,src/**' --apt=python3,python3-venv
+        --run='git init -q && git add -A && git -c user.name=ci -c user.email=ci@localhost commit -qm ci &&
+        python3 -m venv /tmp/pc && /tmp/pc/bin/pip install -q pre-commit &&
+        /tmp/pc/bin/pre-commit run --all-files --show-diff-on-failure &&
+        { npm audit --audit-level=moderate || true; } &&
+        test -f README.md &&
+        find . -name "*.json" -not -path "./node_modules/*" -not -path "./dist/*" | xargs -I {} sh -c "python3 -m json.tool {} > /dev/null && echo \"ok {}\" || echo \"INVALID {}\""'
+        --npm-registry=https://npm.dev.example.com/
+        --dep-cache=registry.dev.example.com/cache
+        --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
