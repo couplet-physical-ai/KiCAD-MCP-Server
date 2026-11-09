@@ -13,6 +13,7 @@ steps:
   # typescript-tests. `npm ci` runs the `prepare` script (tsc), so the install layer needs
   # tsconfig.json and src/.
   - name: typescript-node20
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
@@ -25,6 +26,7 @@ steps:
         --dep-cache=registry.dev.example.com/cache
         --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
   - name: typescript-node22
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
@@ -39,6 +41,7 @@ steps:
   # python-tests. A JRE because the freerouting suites resolve `java`; Black, MyPy and the
   # advisory Pylint run once, on 3.12.
   - name: python-3.9
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
@@ -46,11 +49,12 @@ steps:
     commands:
       - >-
         ci-runner v0.10.1 python-plain --src=. --repo="$${CI_REPO_NAME,,}" --python=3.9
-        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2
+        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2,nodejs
         --run='pytest --cov=python --cov-report=xml'
         --dep-cache=registry.dev.example.com/cache
         --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
   - name: python-3.10
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
@@ -58,11 +62,12 @@ steps:
     commands:
       - >-
         ci-runner v0.10.1 python-plain --src=. --repo="$${CI_REPO_NAME,,}" --python=3.10
-        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2
+        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2,nodejs
         --run='pytest --cov=python --cov-report=xml'
         --dep-cache=registry.dev.example.com/cache
         --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
   - name: python-3.11
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
@@ -70,11 +75,12 @@ steps:
     commands:
       - >-
         ci-runner v0.10.1 python-plain --src=. --repo="$${CI_REPO_NAME,,}" --python=3.11
-        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2
+        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2,nodejs
         --run='pytest --cov=python --cov-report=xml'
         --dep-cache=registry.dev.example.com/cache
         --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
   - name: python-3.12
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
@@ -82,7 +88,7 @@ steps:
     commands:
       - >-
         ci-runner v0.10.1 python-plain --src=. --repo="$${CI_REPO_NAME,,}" --python=3.12
-        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2
+        --requirements=requirements.txt,requirements-dev.txt --apt=default-jre-headless,libcairo2,nodejs
         --run='black --check python/ && mypy python/ && pylint python/ --exit-zero && pytest --cov=python --cov-report=xml'
         --dep-cache=registry.dev.example.com/cache
         --dep-cache-password=file:///etc/ci/cache-password --test-workers=2
@@ -91,6 +97,7 @@ steps:
   # models the smoke tests never open). pcbnew lands in /usr/lib/python3/dist-packages, so the
   # system Python 3.12 imports it; the requirements go into a venv that can see it.
   - name: integration-kicad-8.0
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
@@ -110,6 +117,7 @@ steps:
         /tmp/venv/bin/pytest tests/test_real_pcbnew_matrix.py tests/test_pymupdf_swig_iterator.py -m "integration and real_pcbnew"'
         --test-workers=2
   - name: integration-kicad-9.0
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
@@ -129,6 +137,7 @@ steps:
         /tmp/venv/bin/pytest tests/test_real_pcbnew_matrix.py tests/test_pymupdf_swig_iterator.py -m "integration and real_pcbnew"'
         --test-workers=2
   - name: integration-kicad-10.0
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
@@ -152,6 +161,7 @@ steps:
   # Python 3.11 runs the hooks (mypy and black pin their target versions in pyproject.toml).
   # npm audit stays advisory; the JSON listing reports and never fails, as before.
   - name: code-quality
+    depends_on: []
     image: bash
     environment:
       OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://192.0.2.1:4318/v1/logs
