@@ -1,0 +1,515 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+# Every job sets timeout-minutes. GitHub's default is 360 minutes, so a job
+# that stalls (a PPA download that stops sending data, a hung test) would hold
+# a runner and keep the required "CI passed" check pending for six hours. The
+# limits are about 3x the slowest successful run on main (measured 2026-11-06),
+# with a 10-minute floor.
+jobs:
+  # TypeScript/Node.js tests
+  typescript-tests:
+    name: TypeScript Build & Test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10 # slowest seen: under 2 min (macOS/Windows legs)
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-22.04, windows-latest, macos-latest]
+        node-version: [20.x, 22.x]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run TypeScript compiler
+        run: npm run build
+
+      # `npm run lint` also runs the Python linters, which are not installed in
+      # this job — that is why it used to be `|| echo`-swallowed. Scoping it to
+      # the TypeScript half makes it a real gate here; the Python linters and
+      # the whole-repo formatting check run in the code-quality job via
+      # pre-commit.
+      - name: Run TypeScript linter
+        run: npm run lint:ts
+
+      - name: Run TypeScript tests
+        run: npm run test:ts
+
+      # docs/TOOL_INVENTORY.md is generated from src/tools/*.ts and
+      # dist/tools/registry.js, so it silently goes stale whenever a tool is
+      # added or removed. It had drifted to 138 documented tools against 229
+      # registered before this check existed. The pre-commit hook only protects
+      # contributors who installed it; this makes the inventory a real gate.
+      # Must run after `npm run build` above, because it reads dist/.
+      - name: Check generated tool inventory is current
+        run: npm run docs:tools:check
+
+  # Python tests
+  python-tests:
+    name: Python Tests
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15 # slowest seen: about 3.5 min
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, ubuntu-22.04]
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      # setup-linux.sh checks that Node is available on PATH; mirror the Node
+      # installation that the Python CI image previously supplied.
+      - name: Setup Node.js (required by Linux setup tests)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      # The autoroute/freerouting suites resolve a `java` executable before
+      # they mock out the actual subprocess call, so without a JRE on PATH
+      # 8 tests fail for a purely environmental reason.
+      - name: Set up Java (required by the freerouting test suites)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov black mypy pylint
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      # Formatting and type checks run ONCE, not once per matrix entry. pip
+      # resolves a different linter build per interpreter (black >=25.12
+      # requires Python >=3.10, so the 3.9 runner silently gets black 25.1.0,
+      # which formats three files differently from the 26.x used everywhere
+      # else). Pinning the interpreter for these steps is what makes the gate
+      # deterministic; the matrix is there to exercise the CODE on each Python,
+      # which pytest below still does. Same condition the coverage upload uses.
+      - name: Run Black formatter check
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-24.04'
+        run: black --check python/
+
+      - name: Run MyPy type checker
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-24.04'
+        run: mypy python/
+
+      # Advisory only: pylint's default rule set has never been enforced on this
+      # tree, so a hard gate would fail on thousands of pre-existing findings.
+      # --exit-zero says that honestly instead of hiding a real failure behind
+      # `|| echo`, which is what the other four steps used to do.
+      - name: Run Pylint (advisory)
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-24.04'
+        run: pylint python/ --exit-zero
+
+      # `pytest python/` pointed at the SOURCE tree, and an explicit path
+      # argument overrides pytest.ini's `testpaths = tests` — so CI collected 7
+      # tests from a stray python/test_ipc_backend.py while the real suite in
+      # tests/ never ran. Bare `pytest` picks up testpaths correctly.
+      - name: Run pytest
+        run: pytest --cov=python --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          flags: python
+          name: python-${{ matrix.python-version }}
+        if: matrix.python-version == '3.12' && matrix.os == 'ubuntu-24.04'
+
+  # Integration tests (requires KiCAD)
+  integration-tests:
+    name: Integration Tests (Linux + KiCAD)
+    runs-on: ubuntu-24.04
+    # Usually about 2 minutes, but the KiCad PPA is sometimes slow: three
+    # successful runs on main spent 9, 15 and 18.5 minutes in the install
+    # step. The install step has its own, tighter limit below.
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        kicad: ["8.0", "9.0", "10.0"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      # A stalled PPA download used to hang here until GitHub's 6-hour job
+      # limit. Now: apt gives up on a connection that sends nothing for 60
+      # seconds and retries the file itself (Acquire::Retries); each apt
+      # command is retried up to 3 times; and the whole step fails after 25
+      # minutes, which is above the slowest successful install seen (18.5 min)
+      # so a slow-but-working mirror is not cut off.
+      - name: Add KiCAD PPA and Install KiCAD ${{ matrix.kicad }}
+        timeout-minutes: 25
+        run: |
+          APT_OPTS=(-o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Acquire::https::Timeout=60)
+          retry() {
+            for attempt in 1 2 3; do
+              if "$@"; then return 0; fi
+              echo "::warning::Attempt $attempt of 3 failed: $*"
+              if [ "$attempt" -lt 3 ]; then sleep 15; fi
+            done
+            return 1
+          }
+
+          retry sudo add-apt-repository --yes --no-update ppa:kicad/kicad-${{ matrix.kicad }}-releases
+          retry sudo apt-get "${APT_OPTS[@]}" update
+          retry sudo apt-get "${APT_OPTS[@]}" install -y kicad kicad-libraries
+
+          mapfile -t KICAD_PYTHON_PACKAGES < <(
+            {
+              apt-cache search kicad
+              apt-cache search pcbnew
+            } | awk '
+              BEGIN { IGNORECASE = 1 }
+              {
+                name = $1
+                line = tolower($0)
+                if (name !~ /nightly/ && (line ~ /kicad/ || line ~ /pcbnew/) && line ~ /python/) print name
+              }
+            ' | sort -u
+          )
+
+          if [ "${#KICAD_PYTHON_PACKAGES[@]}" -gt 0 ]; then
+            echo "Installing KiCad Python packages: ${KICAD_PYTHON_PACKAGES[*]}"
+            retry sudo apt-get "${APT_OPTS[@]}" install -y "${KICAD_PYTHON_PACKAGES[@]}"
+          fi
+
+          KICAD_PYTHONPATH="$(python3 - <<'PY'
+          import glob
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          candidates = []
+          seen = set()
+
+
+          def add_candidate(root: Path) -> None:
+              if not root.exists():
+                  return
+              root_str = str(root)
+              if root_str not in seen:
+                  seen.add(root_str)
+                  candidates.append(root_str)
+
+
+          def add_candidate_for_file(file_path: Path) -> None:
+              if file_path.name == "__init__.py" and file_path.parent.name == "pcbnew":
+                  add_candidate(file_path.parent.parent)
+                  return
+              if file_path.parent.name == "pcbnew":
+                  add_candidate(file_path.parent.parent)
+                  return
+              add_candidate(file_path.parent)
+
+
+          def looks_like_pcbnew(file_path: Path) -> bool:
+              name = file_path.name
+              if name == "pcbnew.py":
+                  return True
+              if name == "__init__.py" and file_path.parent.name == "pcbnew":
+                  return True
+              return name.endswith(".so") and (
+                  name.startswith("pcbnew") or name.startswith("_pcbnew")
+              )
+
+
+          def collect_from_package(package: str) -> None:
+              try:
+                  result = subprocess.run(
+                      ["dpkg", "-L", package],
+                      check=True,
+                      capture_output=True,
+                      text=True,
+                  )
+              except subprocess.CalledProcessError:
+                  return
+
+              for raw_path in result.stdout.splitlines():
+                  path = Path(raw_path)
+                  if path.is_file() and looks_like_pcbnew(path):
+                      add_candidate_for_file(path)
+
+
+          package_result = subprocess.run(
+              ["dpkg-query", "-W", "-f=${Package}\n"],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          installed_packages = [
+              package
+              for package in package_result.stdout.splitlines()
+              if "kicad" in package or "pcbnew" in package
+          ]
+
+          for package in installed_packages:
+              collect_from_package(package)
+
+          file_patterns = [
+              "/usr/lib/python3/dist-packages/pcbnew.py",
+              "/usr/lib/python3/dist-packages/pcbnew*.so",
+              "/usr/lib/python3/dist-packages/_pcbnew*.so",
+              "/usr/lib/python3/dist-packages/pcbnew/__init__.py",
+              "/usr/lib/python3/dist-packages/pcbnew/_pcbnew*.so",
+              "/usr/lib/kicad*/lib/python3/dist-packages/pcbnew.py",
+              "/usr/lib/kicad*/lib/python3/dist-packages/pcbnew*.so",
+              "/usr/lib/kicad*/lib/python3/dist-packages/_pcbnew*.so",
+              "/usr/lib/kicad*/lib/python3/dist-packages/pcbnew/__init__.py",
+              "/usr/lib/kicad*/lib/python3/dist-packages/pcbnew/_pcbnew*.so",
+              "/usr/lib/*/dist-packages/pcbnew.py",
+              "/usr/lib/*/dist-packages/pcbnew*.so",
+              "/usr/lib/*/dist-packages/_pcbnew*.so",
+              "/usr/lib/*/dist-packages/pcbnew/__init__.py",
+              "/usr/lib/*/dist-packages/pcbnew/_pcbnew*.so",
+              "/usr/local/lib/python*/dist-packages/pcbnew.py",
+              "/usr/local/lib/python*/dist-packages/pcbnew*.so",
+              "/usr/local/lib/python*/dist-packages/_pcbnew*.so",
+              "/usr/local/lib/python*/dist-packages/pcbnew/__init__.py",
+              "/usr/local/lib/python*/dist-packages/pcbnew/_pcbnew*.so",
+              "/usr/share/kicad*/scripting/pcbnew.py",
+              "/usr/share/kicad*/scripting/pcbnew*.so",
+              "/usr/share/kicad*/scripting/_pcbnew*.so",
+              "/usr/share/kicad*/scripting/pcbnew/__init__.py",
+              "/usr/share/kicad*/scripting/pcbnew/_pcbnew*.so",
+          ]
+
+          for pattern in file_patterns:
+              for raw_path in glob.glob(pattern):
+                  path = Path(raw_path)
+                  if path.is_file() and looks_like_pcbnew(path):
+                      add_candidate_for_file(path)
+
+          if not candidates:
+              for file_path in Path("/usr").rglob("*"):
+                  if file_path.is_file() and looks_like_pcbnew(file_path):
+                      add_candidate_for_file(file_path)
+
+
+          def import_succeeds(candidate: str) -> bool:
+              env = os.environ.copy()
+              existing = env.get("PYTHONPATH", "")
+              env["PYTHONPATH"] = (
+                  f"{candidate}:{existing}" if existing else candidate
+              )
+              probe = subprocess.run(
+                  [
+                      sys.executable,
+                      "-c",
+                      (
+                          "import pcbnew; "
+                          "print(getattr(pcbnew, '__file__', '')); "
+                          "print(pcbnew.GetBuildVersion())"
+                      ),
+                  ],
+                  capture_output=True,
+                  text=True,
+                  env=env,
+              )
+              if probe.returncode == 0:
+                  print(
+                      f"Using pcbnew from {probe.stdout.splitlines()[0]}",
+                      file=sys.stderr,
+                  )
+                  return True
+              return False
+
+
+          working_candidates = [candidate for candidate in candidates if import_succeeds(candidate)]
+          print(":".join(working_candidates))
+          PY
+          )"
+
+          if [ -z "$KICAD_PYTHONPATH" ]; then
+            echo "Unable to locate pcbnew Python bindings after installing KiCad ${{ matrix.kicad }}" >&2
+            {
+              apt-cache search kicad
+              apt-cache search pcbnew
+            } | awk 'BEGIN { IGNORECASE = 1 } tolower($0) ~ /python/ { print }' || true
+            dpkg-query -W -f='${Package}\n' | grep -Ei 'kicad|pcbnew' || true
+            find /usr -path '*dist-packages*' \( -name 'pcbnew.py' -o -name 'pcbnew*.so' -o -name '_pcbnew*.so' \) -print || true
+            exit 1
+          fi
+
+          echo "KICAD_PYTHONPATH=$KICAD_PYTHONPATH" >> $GITHUB_ENV
+
+      - name: Verify KiCAD installation
+        run: |
+          export KICAD_CLI="kicad-cli"
+          export PYTHONPATH="$KICAD_PYTHONPATH:$PYTHONPATH"
+          "$KICAD_CLI" version
+          python3 -c "import pcbnew; print(f'pcbnew version: {pcbnew.GetBuildVersion()}')"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+
+      - name: Run real pcbnew smoke tests
+        env:
+          KICAD_USE_REAL_PCBNEW: "1"
+        run: |
+          export PYTHONPATH="$KICAD_PYTHONPATH:$PYTHONPATH"
+          pytest tests/test_real_pcbnew_matrix.py tests/test_pymupdf_swig_iterator.py -m "integration and real_pcbnew"
+
+  # Docker build test
+  docker-build:
+    name: Docker Build Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # slowest seen: under 1 min
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: |
+          echo "Docker build not yet configured"
+          # docker build -t kicad-mcp-server:test .
+
+  # Code quality checks
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    # Slowest seen: about 2 min. Extra headroom because a change to
+    # .pre-commit-config.yaml misses the hook cache and rebuilds every hook.
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+
+      - name: Install dependencies
+        # Needed before pre-commit: the prettier and eslint hooks shell out to
+        # `npx`, and eslint resolves its config and TS parser from node_modules.
+        run: npm ci
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install pre-commit
+        run: python -m pip install --upgrade pip pre-commit
+
+      - name: Cache pre-commit hook environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      # The single authoritative formatting/lint gate, and the one CONTRIBUTING
+      # has always claimed ("hooks enforce Black, isort, Prettier, flake8, mypy,
+      # ESLint ... must pass before code is merged") while nothing enforced it.
+      # Replaces two steps that ran `npx eslint src/ || echo` and
+      # `npx prettier --check "src/**/*.ts" || echo` — both of which reported
+      # success regardless of outcome, and only covered src/.
+      - name: Run pre-commit hooks
+        run: pre-commit run --all-files --show-diff-on-failure
+
+      # Advisory: a transitive advisory in a dev dependency should not block a
+      # PR that did not introduce it. `|| true` is explicit about that, unlike
+      # the `|| echo "No critical vulnerabilities"` it replaces, which printed a
+      # reassuring message that was not checked against anything.
+      - name: Check for security vulnerabilities (advisory)
+        run: npm audit --audit-level=moderate || true
+
+  # Documentation check
+  docs-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # slowest seen: under 1 min
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check README exists
+        run: test -f README.md
+
+      - name: Check for broken links in docs
+        run: |
+          sudo apt-get install -y linkchecker || true
+          # linkchecker docs/ || echo "Link checker not configured"
+
+      - name: Validate JSON files
+        run: |
+          find . -name "*.json" -not -path "./node_modules/*" -not -path "./dist/*" | xargs -I {} sh -c 'python3 -m json.tool {} > /dev/null && echo "✓ {}" || echo "✗ {}"'
+
+  # The single status check branch protection requires on main. Matrix jobs
+  # report one check per leg with the versions in the name ("Python Tests
+  # (ubuntu-22.04, 3.9)"), so requiring those directly would break the rule
+  # whenever the matrix changes; this job succeeds only when every job above
+  # did. docs/RELEASING.md describes the protection rules.
+  #
+  # A job that hits its timeout-minutes ends as "failure" (or "cancelled"),
+  # never "success", so the loop below fails this check for it. `if: always()`
+  # is what makes this job run at all after a failed or timed-out dependency;
+  # without it GitHub would skip it, and a skipped required check does not
+  # block the merge.
+  ci-passed:
+    name: CI passed
+    if: always()
+    timeout-minutes: 5
+    needs:
+      - typescript-tests
+      - python-tests
+      - integration-tests
+      - docker-build
+      - code-quality
+      - docs-check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check that every job succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Job results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then
+              echo "::error::A CI job ended with '$result'."
+              exit 1
+            fi
+          done
